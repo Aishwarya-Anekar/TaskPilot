@@ -1,0 +1,12 @@
+Open Terminal 1 (Backend):
+
+bash
+cd desktop\campus-connect\server
+npm run dev
+
+
+Open Terminal 2 (Frontend):
+
+bash
+cd desktop\campus-connect
+npm run dev

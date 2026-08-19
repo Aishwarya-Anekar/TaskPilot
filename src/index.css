@@ -1,0 +1,165 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 216 25% 97%;
+    --foreground: 215 50% 15%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 215 50% 15%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 215 50% 15%;
+
+    --primary: 216 78% 20%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 216 25% 94%;
+    --secondary-foreground: 216 78% 20%;
+
+    --muted: 216 20% 93%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 142 71% 45%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 214 20% 90%;
+    --input: 214 20% 90%;
+    --ring: 216 78% 20%;
+
+    --radius: 0.75rem;
+
+    --sidebar-background: 216 78% 20%;
+    --sidebar-foreground: 216 20% 90%;
+    --sidebar-primary: 142 71% 45%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 216 70% 28%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 216 70% 25%;
+    --sidebar-ring: 142 71% 45%;
+
+    --warning: 45 93% 47%;
+    --warning-foreground: 45 93% 15%;
+    --info: 210 100% 50%;
+    --info-foreground: 0 0% 100%;
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+  }
+
+  .dark {
+    --background: 220 20% 7%;
+    --foreground: 210 40% 95%;
+
+    --card: 220 20% 10%;
+    --card-foreground: 210 40% 95%;
+
+    --popover: 220 20% 10%;
+    --popover-foreground: 210 40% 95%;
+
+    --primary: 216 70% 35%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 18% 15%;
+    --secondary-foreground: 210 30% 85%;
+
+    --muted: 220 18% 14%;
+    --muted-foreground: 215 15% 55%;
+
+    --accent: 142 60% 45%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 15% 18%;
+    --input: 220 15% 18%;
+    --ring: 142 60% 45%;
+
+    --sidebar-background: 220 25% 8%;
+    --sidebar-foreground: 220 15% 70%;
+    --sidebar-primary: 142 60% 45%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 20% 16%;
+    --sidebar-accent-foreground: 210 40% 95%;
+    --sidebar-border: 220 20% 14%;
+    --sidebar-ring: 142 60% 45%;
+
+    --warning: 45 93% 47%;
+    --warning-foreground: 45 93% 15%;
+    --info: 210 100% 55%;
+    --info-foreground: 0 0% 100%;
+    --success: 142 60% 45%;
+    --success-foreground: 0 0% 100%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
+    font-family: 'Inter', sans-serif;
+  }
+}
+
+@layer utilities {
+  .card-shadow {
+    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.04), 0 1px 2px -1px rgb(0 0 0 / 0.04);
+  }
+  .dark .card-shadow {
+    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.2), 0 1px 2px -1px rgb(0 0 0 / 0.15);
+  }
+  .card-shadow-hover {
+    box-shadow: 0 20px 40px -12px rgb(0 0 0 / 0.1), 0 8px 20px -8px rgb(0 0 0 / 0.06);
+  }
+  .dark .card-shadow-hover {
+    box-shadow: 0 20px 40px -12px rgb(0 0 0 / 0.4), 0 8px 20px -8px rgb(0 0 0 / 0.3);
+  }
+  .card-elevated {
+    box-shadow: 0 4px 12px -2px rgb(0 0 0 / 0.06), 0 2px 6px -2px rgb(0 0 0 / 0.04);
+  }
+  .dark .card-elevated {
+    box-shadow: 0 4px 12px -2px rgb(0 0 0 / 0.3), 0 2px 6px -2px rgb(0 0 0 / 0.2);
+    border: 1px solid hsl(220 15% 18%);
+  }
+  .glass {
+    backdrop-filter: blur(12px) saturate(180%);
+    -webkit-backdrop-filter: blur(12px) saturate(180%);
+    background: hsl(var(--card) / 0.8);
+  }
+  .dark .glass {
+    background: hsl(var(--card) / 0.9);
+  }
+  .btn-gradient {
+    background: linear-gradient(135deg, hsl(216 78% 20%), hsl(216 78% 28%));
+  }
+  .dark .btn-gradient {
+    background: linear-gradient(135deg, hsl(216 65% 30%), hsl(216 65% 40%));
+  }
+  .btn-gradient-accent {
+    background: linear-gradient(135deg, hsl(var(--accent)), hsl(142 71% 38%));
+  }
+  .input-focus {
+    @apply border border-input bg-background transition-all duration-200;
+  }
+  .dark .input-focus {
+    @apply bg-[hsl(220,18%,12%)];
+  }
+  .input-focus:focus {
+    @apply ring-2 ring-ring border-transparent shadow-[0_0_0_3px_hsl(var(--ring)/0.1)];
+  }
+  .dark .input-focus:focus {
+    @apply shadow-[0_0_0_3px_hsl(var(--ring)/0.2)];
+  }
+}
