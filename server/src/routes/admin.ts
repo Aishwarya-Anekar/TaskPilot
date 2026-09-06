@@ -13,6 +13,57 @@ import { sendVerificationEmail } from "../email.js";
 
 const router = Router();
 
+const BLOCKING_BOOKING_STATUSES = ["Approved", "Active", "Confirmed"];
+
+function validateBookingTimes(startTime: unknown, endTime: unknown): { startTime: string; endTime: string } | null {
+  if (typeof startTime !== "string" || typeof endTime !== "string" || !startTime.trim() || !endTime.trim()) {
+    return null;
+  }
+
+  const start = Date.parse(startTime);
+  const end = Date.parse(endTime);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end) {
+    return null;
+  }
+
+  return { startTime: startTime.trim(), endTime: endTime.trim() };
+}
+
+async function lockResources(client: import("pg").PoolClient, resourceIds: number[]) {
+  for (const resourceId of [...new Set(resourceIds)].sort((a, b) => a - b)) {
+    await client.query("SELECT pg_advisory_xact_lock($1::bigint)", [resourceId]);
+  }
+}
+
+async function findBookingConflict(
+  client: import("pg").PoolClient,
+  resourceId: number,
+  startTime: string,
+  endTime: string,
+  excludedBookingId?: number
+) {
+  const params: unknown[] = [resourceId, startTime, endTime, BLOCKING_BOOKING_STATUSES];
+  const exclusion = excludedBookingId ? "AND id <> $5" : "";
+  if (excludedBookingId) params.push(excludedBookingId);
+
+  return client.query(
+    `SELECT id, start_time, end_time
+     FROM resource_bookings
+     WHERE resource_id = $1
+       AND status = ANY($4::varchar[])
+       AND start_time < $3::timestamp
+       AND end_time > $2::timestamp
+       ${exclusion}
+     ORDER BY start_time ASC
+     LIMIT 1`,
+    params
+  );
+}
+
+function conflictMessage(conflict: { start_time: string; end_time: string }) {
+  return `This resource is already booked from ${new Date(conflict.start_time).toLocaleString()} to ${new Date(conflict.end_time).toLocaleString()} during the selected time period.`;
+}
+
 // All admin routes require authentication
 router.use(authenticate);
 
@@ -365,6 +416,7 @@ router.post("/resources", requireAdmin, async (req: AuthRequest, res: Response) 
 
 // POST /api/admin/resources/book - Book resource
 router.post("/resources/book", async (req: AuthRequest, res: Response) => {
+  const client = await pool.connect();
   try {
     const { resource_id, event_id, start_time, end_time } = req.body;
     if (!resource_id || !event_id || !start_time || !end_time) {
@@ -372,35 +424,41 @@ router.post("/resources/book", async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    // Check availability
-    const conflict = await pool.query(
-      `SELECT id FROM resource_bookings
-       WHERE resource_id = $1
-         AND status = 'Approved'
-         AND (
-           (start_time <= $2 AND end_time > $2) OR
-           (start_time < $3 AND end_time >= $3) OR
-           (start_time >= $2 AND end_time <= $3)
-         )`,
-      [resource_id, start_time, end_time]
-    );
-
-    if (conflict.rows.length > 0) {
-      res.status(409).json({ error: "Resource is already booked for the selected time range" });
+    const times = validateBookingTimes(start_time, end_time);
+    if (!times) {
+      res.status(400).json({ error: "A valid start_time earlier than end_time is required" });
       return;
     }
 
-    const result = await pool.query(
+    const resourceId = Number(resource_id);
+    const eventId = Number(event_id);
+    if (!Number.isInteger(resourceId) || resourceId <= 0 || !Number.isInteger(eventId) || eventId <= 0) {
+      res.status(400).json({ error: "Resource ID and Event ID must be valid positive integers" });
+      return;
+    }
+
+    await client.query("BEGIN");
+    await lockResources(client, [resourceId]);
+    const conflict = await findBookingConflict(client, resourceId, times.startTime, times.endTime);
+
+    if (conflict.rows.length > 0) {
+      await client.query("ROLLBACK");
+      res.status(409).json({ error: conflictMessage(conflict.rows[0]) });
+      return;
+    }
+
+    const result = await client.query(
       `INSERT INTO resource_bookings (resource_id, event_id, booked_by, start_time, end_time, status)
        VALUES ($1, $2, $3, $4, $5, 'Approved') RETURNING *`,
-      [resource_id, event_id, req.userId, start_time, end_time]
+      [resourceId, eventId, req.userId, times.startTime, times.endTime]
     );
+    await client.query("COMMIT");
 
     const recipients = await pool.query(
       `SELECT DISTINCT id FROM users
        WHERE id = $1 OR id = (SELECT coordinator_id FROM events WHERE id = $2)
           OR role IN ('admin', 'super_admin')`,
-      [req.userId, event_id]
+      [req.userId, eventId]
     );
     await createNotifications(recipients.rows.map((recipient) => ({
       userId: recipient.id,
@@ -408,34 +466,82 @@ router.post("/resources/book", async (req: AuthRequest, res: Response) => {
       title: "Resource booking approved",
       message: "Your resource booking has been approved.",
       entityType: "event",
-      entityId: Number(event_id),
+      entityId: eventId,
       dedupeKey: `booking:${result.rows[0].id}:status:Approved`,
     })));
 
     res.status(201).json(result.rows[0]);
   } catch (err) {
+    await client.query("ROLLBACK").catch(() => undefined);
     console.error("Book resource error:", err);
     res.status(500).json({ error: "Server error" });
+  } finally {
+    client.release();
   }
 });
 
-// PUT /api/admin/resources/bookings/:id - Update booking status
+// PUT /api/admin/resources/bookings/:id - Update booking status or booking details
 router.put("/resources/bookings/:id", requireAdmin, async (req: AuthRequest, res: Response) => {
+  const client = await pool.connect();
   try {
-    const { status } = req.body;
-    if (!['Pending', 'Approved', 'Cancelled'].includes(status)) {
+    const { status, resource_id, event_id, start_time, end_time } = req.body;
+    if (!['Pending', 'Approved', 'Active', 'Confirmed', 'Cancelled', 'Rejected'].includes(status)) {
       res.status(400).json({ error: "Invalid booking status" });
       return;
     }
-    const result = await pool.query(
-      `UPDATE resource_bookings SET status = $1 WHERE id = $2
-       RETURNING id, event_id, booked_by, status`,
-      [status, req.params.id]
+
+    const bookingId = Number(req.params.id);
+    if (!Number.isInteger(bookingId) || bookingId <= 0) {
+      res.status(400).json({ error: "Booking ID must be a valid positive integer" });
+      return;
+    }
+
+    await client.query("BEGIN");
+    const existingResult = await client.query(
+      `SELECT id, resource_id, event_id, booked_by, start_time, end_time, status
+       FROM resource_bookings WHERE id = $1 FOR UPDATE`,
+      [bookingId]
     );
-    if (!result.rows.length) {
+    if (!existingResult.rows.length) {
+      await client.query("ROLLBACK");
       res.status(404).json({ error: "Booking not found" });
       return;
     }
+
+    const existing = existingResult.rows[0];
+    const resourceId = resource_id === undefined ? existing.resource_id : Number(resource_id);
+    const eventId = event_id === undefined ? existing.event_id : Number(event_id);
+    if (!Number.isInteger(resourceId) || resourceId <= 0 || !Number.isInteger(eventId) || eventId <= 0) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: "Resource ID and Event ID must be valid positive integers" });
+      return;
+    }
+
+    const times = validateBookingTimes(start_time ?? existing.start_time, end_time ?? existing.end_time);
+    if (!times) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: "A valid start_time earlier than end_time is required" });
+      return;
+    }
+
+    await lockResources(client, [existing.resource_id, resourceId]);
+    if (BLOCKING_BOOKING_STATUSES.includes(status)) {
+      const conflict = await findBookingConflict(client, resourceId, times.startTime, times.endTime, bookingId);
+      if (conflict.rows.length > 0) {
+        await client.query("ROLLBACK");
+        res.status(409).json({ error: conflictMessage(conflict.rows[0]) });
+        return;
+      }
+    }
+
+    const result = await client.query(
+      `UPDATE resource_bookings
+       SET status = $1, resource_id = $2, event_id = $3, start_time = $4, end_time = $5
+       WHERE id = $6
+       RETURNING id, event_id, booked_by, status`,
+      [status, resourceId, eventId, times.startTime, times.endTime, bookingId]
+    );
+    await client.query("COMMIT");
     const booking = result.rows[0];
     await createNotifications([{
       userId: booking.booked_by,
@@ -448,8 +554,11 @@ router.put("/resources/bookings/:id", requireAdmin, async (req: AuthRequest, res
     }]);
     res.json(booking);
   } catch (err) {
+    await client.query("ROLLBACK").catch(() => undefined);
     console.error("Update booking error:", err);
     res.status(500).json({ error: "Server error" });
+  } finally {
+    client.release();
   }
 });
 

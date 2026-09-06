@@ -390,6 +390,8 @@ export async function initDb() {
       CREATE INDEX IF NOT EXISTS events_title_search_idx ON events (LOWER(title));
       CREATE INDEX IF NOT EXISTS tasks_assigned_to_idx ON tasks (assigned_to_id);
       CREATE INDEX IF NOT EXISTS tasks_assigned_dept_idx ON tasks (assigned_dept_id);
+      CREATE INDEX IF NOT EXISTS resource_bookings_resource_time_idx
+        ON resource_bookings (resource_id, start_time, end_time, status);
     `);
 
     console.log("Database schema checked successfully. Missing tables and indexes were created; existing data preserved.");
