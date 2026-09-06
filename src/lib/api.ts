@@ -1,4 +1,5 @@
-const API_BASE = "http://localhost:5001/api";
+const API_ORIGIN = (import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/$/, "");
+const API_BASE = `${API_ORIGIN}/api`;
 
 export function getToken(): string | null {
   return localStorage.getItem("cc_token");
@@ -79,4 +80,13 @@ export async function apiPut<T>(
   return res.json();
 }
 
-export const UPLOADS_BASE = "http://localhost:5001";
+export async function apiDelete<T>(endpoint: string): Promise<T> {
+  const res = await apiFetch(endpoint, { method: "DELETE" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "Request failed" }));
+    throw new Error(err.error || "Request failed");
+  }
+  return res.json();
+}
+
+export const UPLOADS_BASE = API_ORIGIN;

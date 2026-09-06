@@ -6,6 +6,10 @@ import {
   requireAdmin,
   AuthRequest,
 } from "../middleware/auth.js";
+import { createNotifications, notifyTaskAudience } from "../notifications.js";
+import { sendWelcomeEmail } from "../email.js";
+import crypto from "crypto";
+import { sendVerificationEmail } from "../email.js";
 
 const router = Router();
 
@@ -82,6 +86,37 @@ router.get("/stats", async (req: AuthRequest, res: Response) => {
     });
   } catch (err) {
     console.error("Admin stats error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// GET/PUT /api/admin/escalation-settings - Configure escalation delays in hours
+router.get("/escalation-settings", requireAdmin, async (_req: AuthRequest, res: Response) => {
+  try {
+    const result = await pool.query("SELECT stage_2_hours, stage_3_hours, updated_at FROM escalation_settings WHERE id = 1");
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("Get escalation settings error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.put("/escalation-settings", requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const stage2 = Number(req.body.stage_2_hours);
+    const stage3 = Number(req.body.stage_3_hours);
+    if (!Number.isInteger(stage2) || !Number.isInteger(stage3) || stage2 <= 0 || stage3 <= stage2) {
+      res.status(400).json({ error: "Stage 2 must be positive and Stage 3 must be greater than Stage 2" });
+      return;
+    }
+    const result = await pool.query(
+      `UPDATE escalation_settings SET stage_2_hours = $1, stage_3_hours = $2, updated_by = $3, updated_at = NOW()
+       WHERE id = 1 RETURNING stage_2_hours, stage_3_hours, updated_at`, [stage2, stage3, req.userId]
+    );
+    await pool.query("INSERT INTO activity_logs (user_id, action, details) VALUES ($1, 'Update Escalation Settings', $2)", [req.userId, `Escalation intervals set to ${stage2}h and ${stage3}h.`]);
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("Update escalation settings error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -171,7 +206,7 @@ router.delete("/departments/:id", requireAdmin, async (req: AuthRequest, res: Re
 router.get("/employees", async (_req: AuthRequest, res: Response) => {
   try {
     const result = await pool.query(
-      `SELECT u.id, u.name, u.email, u.role, u.semester, d.name as department, d.id as department_id
+      `SELECT u.id, u.name, u.email, u.role, u.semester, u.email_verified, d.name as department, d.id as department_id
        FROM users u
        LEFT JOIN departments d ON u.department_id = d.id
        ORDER BY u.name ASC`
@@ -181,6 +216,20 @@ router.get("/employees", async (_req: AuthRequest, res: Response) => {
     console.error("List employees error:", err);
     res.status(500).json({ error: "Server error" });
   }
+});
+
+router.post("/employees/:id/resend-verification", requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const result = await pool.query("SELECT id, name, email, email_verified FROM users WHERE id = $1", [req.params.id]);
+    if (!result.rows.length) return res.status(404).json({ error: "User not found" });
+    if (result.rows[0].email_verified) return res.json({ message: "User email is already verified." });
+    const rawToken = crypto.randomBytes(32).toString("hex");
+    const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+    await pool.query("UPDATE email_verification_tokens SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL", [req.params.id]);
+    await pool.query("INSERT INTO email_verification_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, NOW() + INTERVAL '24 hours')", [req.params.id, tokenHash]);
+    try { await sendVerificationEmail(result.rows[0], rawToken); } catch (error) { console.error("Admin verification email failed:", error instanceof Error ? error.message : "Unknown email error"); }
+    res.json({ message: "Verification email request processed." });
+  } catch (error) { console.error("Admin resend verification error:", error); res.status(500).json({ error: "Server error" }); }
 });
 
 // POST /api/admin/employees - Create a new user (employee/dept_head/admin)
@@ -200,9 +249,9 @@ router.post("/employees", requireAdmin, async (req: AuthRequest, res: Response) 
 
     const hash = await bcrypt.hash(password, 10);
     const result = await pool.query(
-      `INSERT INTO users (name, email, password_hash, role, department_id)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id, name, email, role, department_id`,
-      [name, email, hash, role, department_id || null]
+      `INSERT INTO users (name, email, password_hash, role, department_id, email_verified)
+      VALUES ($1, $2, $3, $4, $5, false) RETURNING id, name, email, role, department_id`,
+          [name, email, hash, role, department_id || null]
     );
 
     await pool.query(
@@ -210,6 +259,14 @@ router.post("/employees", requireAdmin, async (req: AuthRequest, res: Response) 
       [req.userId, `Registered user "${name}" with role "${role}"`]
     );
 
+    await sendWelcomeEmail(result.rows[0]);
+    await pool.query("UPDATE users SET email_verified = false WHERE id = $1", [result.rows[0].id]);
+    try {
+      const token = crypto.randomBytes(32).toString("hex");
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      await pool.query("INSERT INTO email_verification_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, NOW() + INTERVAL '24 hours')", [result.rows[0].id, tokenHash]);
+      await sendVerificationEmail(result.rows[0], token);
+    } catch (error) { console.error("User verification email failed:", error instanceof Error ? error.message : "Unknown email error"); }
     res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error("Create user error:", err);
@@ -339,9 +396,59 @@ router.post("/resources/book", async (req: AuthRequest, res: Response) => {
       [resource_id, event_id, req.userId, start_time, end_time]
     );
 
+    const recipients = await pool.query(
+      `SELECT DISTINCT id FROM users
+       WHERE id = $1 OR id = (SELECT coordinator_id FROM events WHERE id = $2)
+          OR role IN ('admin', 'super_admin')`,
+      [req.userId, event_id]
+    );
+    await createNotifications(recipients.rows.map((recipient) => ({
+      userId: recipient.id,
+      type: "booking_status_changed",
+      title: "Resource booking approved",
+      message: "Your resource booking has been approved.",
+      entityType: "event",
+      entityId: Number(event_id),
+      dedupeKey: `booking:${result.rows[0].id}:status:Approved`,
+    })));
+
     res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error("Book resource error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// PUT /api/admin/resources/bookings/:id - Update booking status
+router.put("/resources/bookings/:id", requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const { status } = req.body;
+    if (!['Pending', 'Approved', 'Cancelled'].includes(status)) {
+      res.status(400).json({ error: "Invalid booking status" });
+      return;
+    }
+    const result = await pool.query(
+      `UPDATE resource_bookings SET status = $1 WHERE id = $2
+       RETURNING id, event_id, booked_by, status`,
+      [status, req.params.id]
+    );
+    if (!result.rows.length) {
+      res.status(404).json({ error: "Booking not found" });
+      return;
+    }
+    const booking = result.rows[0];
+    await createNotifications([{
+      userId: booking.booked_by,
+      type: "booking_status_changed",
+      title: "Resource booking status changed",
+      message: `Your resource booking is now ${status.toLowerCase()}.`,
+      entityType: "event",
+      entityId: booking.event_id,
+      dedupeKey: `booking:${booking.id}:status:${status}`,
+    }]);
+    res.json(booking);
+  } catch (err) {
+    console.error("Update booking error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -389,6 +496,14 @@ router.put("/issues/:id", async (req: AuthRequest, res: Response) => {
         "INSERT INTO task_comments (task_id, user_id, text) VALUES ($1, $2, $3)",
         [id, req.userId, `Status updated to "${status}" via Admin Panel.`]
       );
+      await notifyTaskAudience(Number(id), {
+        type: status === "Under Review" ? "task_submitted" : status === "Completed" ? "task_approved" : status === "Rejected" ? "task_rejected" : "task_status_updated",
+        title: "Task status updated",
+        message: `Task status changed to ${status}.`,
+        entityType: "task",
+        entityId: Number(id),
+        dedupeKey: `task:${id}:admin-status:${Date.now()}`,
+      }, req.userId);
     }
 
     res.json(result.rows[0]);

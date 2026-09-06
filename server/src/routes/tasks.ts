@@ -4,6 +4,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import pool from "../db.js";
 import { authenticate, AuthRequest } from "../middleware/auth.js";
+import { notifyTaskAudience } from "../notifications.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -429,6 +430,10 @@ router.get("/:id", authenticate, async (req: AuthRequest, res: Response) => {
        ORDER BY tc.created_at ASC`,
       [id]
     );
+    const escalations = await pool.query(
+      `SELECT stage, recipient_role, created_at FROM task_escalations
+       WHERE task_id = $1 ORDER BY stage ASC`, [id]
+    );
 
     // Adapt to original structure where logs = comments
     const work_logs = comments.rows.map((c) => ({
@@ -442,6 +447,7 @@ router.get("/:id", authenticate, async (req: AuthRequest, res: Response) => {
       subtasks: subtasks.rows,
       work_logs: work_logs,
       comments: comments.rows,
+      escalations: escalations.rows,
       category: task.title, // keep layout mapping compatibility
       location: task.event_title || "General",
     });
@@ -500,6 +506,15 @@ router.post("/", authenticate, async (req: AuthRequest, res: Response) => {
       `INSERT INTO task_comments (task_id, user_id, text) VALUES ($1, $2, $3)`,
       [task.id, req.userId, `Task created and initialized.`]
     );
+
+    await notifyTaskAudience(task.id, {
+      type: "task_assigned",
+      title: "New task assigned",
+      message: `You have been assigned "${task.title}" for ${eventRes.rows[0].title}.`,
+      entityType: "task",
+      entityId: task.id,
+      dedupeKey: `task:${task.id}:assigned:${task.assigned_to_id || task.assigned_dept_id || "unassigned"}`,
+    }, req.userId);
 
     res.status(201).json(task);
   } catch (err) {
@@ -566,7 +581,7 @@ router.put("/:id", authenticate, upload.single("proof"), async (req: AuthRequest
     const updatedTask = result.rows[0];
 
     // Add automatic comment on status changes
-    if (status && status !== originalTask.status) {
+    if (finalStatus !== originalTask.status) {
       await pool.query(
         `INSERT INTO task_comments (task_id, user_id, text) VALUES ($1, $2, $3)`,
         [id, req.userId, `Status updated to "${status}". ${comment || ""}`]
@@ -583,6 +598,35 @@ router.put("/:id", authenticate, upload.single("proof"), async (req: AuthRequest
         `INSERT INTO task_comments (task_id, user_id, text) VALUES ($1, $2, $3)`,
         [id, req.userId, `Submitted completion proof file: ${req.file.originalname}`]
       );
+    }
+
+    if (finalStatus !== originalTask.status) {
+      const specialStatus = finalStatus === "Under Review" ? "task_submitted" :
+        finalStatus === "Completed" ? "task_approved" :
+        finalStatus === "Rejected" ? "task_rejected" : "task_status_updated";
+      const statusMessage = finalStatus === "Under Review" ? `"${updatedTask.title}" was submitted for review.` :
+        finalStatus === "Completed" ? `"${updatedTask.title}" was approved.` :
+        finalStatus === "Rejected" ? `"${updatedTask.title}" was rejected.` :
+        `"${updatedTask.title}" status changed to ${finalStatus}.`;
+      await notifyTaskAudience(Number(id), {
+        type: specialStatus,
+        title: specialStatus === "task_status_updated" ? "Task status updated" : specialStatus.replace("task_", "").replace("_", " "),
+        message: statusMessage,
+        entityType: "task",
+        entityId: Number(id),
+        dedupeKey: `task:${id}:status:${updatedTask.updated_at}`,
+      }, req.userId);
+    }
+
+    if (assigned_to_id || assigned_dept_id) {
+      await notifyTaskAudience(Number(id), {
+        type: "task_assigned",
+        title: "Task assignment updated",
+        message: `The assignment for "${updatedTask.title}" has changed.`,
+        entityType: "task",
+        entityId: Number(id),
+        dedupeKey: `task:${id}:assignment:${assigned_to_id || assigned_dept_id}`,
+      }, req.userId);
     }
 
     res.json(updatedTask);

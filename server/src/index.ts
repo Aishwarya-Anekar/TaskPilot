@@ -10,6 +10,13 @@ import authRoutes from "./routes/auth.js";
 import tasksRoutes from "./routes/tasks.js";
 import messagesRoutes from "./routes/messages.js";
 import adminRoutes from "./routes/admin.js";
+import searchRoutes from "./routes/search.js";
+import notificationRoutes from "./routes/notifications.js";
+import { startNotificationScheduler } from "./scheduler.js";
+import templateRoutes from "./routes/templates.js";
+import reportRoutes from "./routes/reports.js";
+import calendarRoutes from "./routes/calendar.js";
+import visitorRoutes from "./routes/visitors.js";
 
 dotenv.config();
 
@@ -37,6 +44,12 @@ app.use("/api/tasks", tasksRoutes);
 app.use("/api/issues", tasksRoutes);
 app.use("/api/messages", messagesRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/search", searchRoutes);
+app.use("/api/notifications", notificationRoutes);
+app.use("/api/templates", templateRoutes);
+app.use("/api/reports", reportRoutes);
+app.use("/api/calendar", calendarRoutes);
+app.use("/api/visitors", visitorRoutes);
 
 // Health check
 app.get("/api/health", (_req, res) => {
@@ -54,6 +67,7 @@ async function start() {
       console.log(`🚀 Primary server process ${process.pid} is running`);
       try {
         await initDb();
+        startNotificationScheduler();
         console.log("Database initialized. Forking workers...");
 
         // Fork workers based on CPU core availability (cap at 4 for local safety)
@@ -83,6 +97,7 @@ async function start() {
     // Single instance mode (default)
     try {
       await initDb();
+      startNotificationScheduler();
       app.listen(PORT, () => {
         console.log(`🚀 Server running on http://localhost:${PORT}`);
       });

@@ -3,8 +3,80 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import pool from "../db.js";
 import { authenticate, AuthRequest } from "../middleware/auth.js";
+import { sendWelcomeEmail, sendVerificationEmail } from "../email.js";
+import { sendPasswordResetEmail } from "../email.js";
+import crypto from "crypto";
 
 const router = Router();
+
+const resetAttempts = new Map<string, { count: number; resetAt: number }>();
+const verificationAttempts = new Map<number, { count: number; resetAt: number }>();
+
+async function issueVerification(user: { id: number; name: string; email: string }) {
+  const rawToken = crypto.randomBytes(32).toString("hex");
+  const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+  await pool.query("UPDATE email_verification_tokens SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL", [user.id]);
+  await pool.query("INSERT INTO email_verification_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, NOW() + INTERVAL '24 hours')", [user.id, tokenHash]);
+  await sendVerificationEmail(user, rawToken);
+}
+
+router.get("/verify-email", async (req: any, res: Response) => {
+  try {
+    const token = String(req.query.token || "");
+    if (!token) return res.status(400).json({ error: "Verification link is invalid or expired." });
+    const hash = crypto.createHash("sha256").update(token).digest("hex");
+    const result = await pool.query("SELECT id, user_id FROM email_verification_tokens WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()", [hash]);
+    if (!result.rows.length) return res.status(400).json({ error: "Verification link is invalid or expired." });
+    await pool.query("UPDATE users SET email_verified = true WHERE id = $1", [result.rows[0].user_id]);
+    await pool.query("UPDATE email_verification_tokens SET used_at = NOW() WHERE id = $1", [result.rows[0].id]);
+    res.json({ message: "Email verified successfully. Your account is active." });
+  } catch (error) { console.error("Email verification error:", error); res.status(500).json({ error: "Unable to verify email" }); }
+});
+
+router.post("/resend-verification", authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    const attempt = verificationAttempts.get(req.userId!); const now = Date.now();
+    if (attempt && attempt.resetAt > now && attempt.count >= 3) return res.status(429).json({ error: "Too many verification requests. Try again later." });
+    const result = await pool.query("SELECT id, name, email, email_verified FROM users WHERE id = $1", [req.userId]);
+    if (!result.rows.length || result.rows[0].email_verified) return res.json({ message: "If verification is required, a new email has been sent." });
+    verificationAttempts.set(req.userId!, { count: attempt && attempt.resetAt > now ? attempt.count + 1 : 1, resetAt: now + 15 * 60 * 1000 });
+    await issueVerification(result.rows[0]);
+    res.json({ message: "If verification is required, a new email has been sent." });
+  } catch (error) { console.error("Resend verification error:", error); res.json({ message: "If verification is required, a new email has been sent." }); }
+});
+
+router.post("/forgot-password", async (req: any, res: Response) => {
+  const generic = "If an account exists for that email, a password reset link has been sent.";
+  try {
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const now = Date.now(); const attempt = resetAttempts.get(email);
+    if (attempt && attempt.resetAt > now && attempt.count >= 5) return res.json({ message: generic });
+    if (!email || !/^\S+@\S+\.\S+$/.test(email)) return res.json({ message: generic });
+    resetAttempts.set(email, { count: attempt && attempt.resetAt > now ? attempt.count + 1 : 1, resetAt: now + 15 * 60 * 1000 });
+    const userResult = await pool.query("SELECT id, name, email FROM users WHERE LOWER(email) = $1", [email]);
+    if (userResult.rows.length) {
+      const rawToken = crypto.randomBytes(32).toString("hex");
+      const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+      await pool.query("UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL", [userResult.rows[0].id]);
+      await pool.query("INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, NOW() + INTERVAL '30 minutes')", [userResult.rows[0].id, tokenHash]);
+      try { await sendPasswordResetEmail(userResult.rows[0], rawToken); } catch (error) { console.error("Password reset email failed:", error instanceof Error ? error.message : "Unknown email error"); }
+    }
+    return res.json({ message: generic });
+  } catch (error) { console.error("Forgot password error:", error); return res.json({ message: generic }); }
+});
+
+router.post("/reset-password", async (req: any, res: Response) => {
+  try {
+    const { token, password, confirmPassword } = req.body;
+    if (typeof token !== "string" || typeof password !== "string" || password !== confirmPassword || password.length < 8 || !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password)) return res.status(400).json({ error: "Use matching passwords with 8+ characters, uppercase, lowercase, and a number." });
+    const hash = crypto.createHash("sha256").update(token).digest("hex");
+    const result = await pool.query("SELECT id, user_id FROM password_reset_tokens WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()", [hash]);
+    if (!result.rows.length) return res.status(400).json({ error: "This reset link is invalid or expired." });
+    await pool.query("UPDATE users SET password_hash = $1 WHERE id = $2", [await bcrypt.hash(password, 12), result.rows[0].user_id]);
+    await pool.query("UPDATE password_reset_tokens SET used_at = NOW() WHERE id = $1", [result.rows[0].id]);
+    res.json({ message: "Password reset successfully. You can now sign in." });
+  } catch (error) { console.error("Reset password error:", error); res.status(500).json({ error: "Unable to reset password" }); }
+});
 
 // POST /api/auth/register
 router.post("/register", async (req, res: Response) => {
@@ -47,6 +119,9 @@ router.post("/register", async (req, res: Response) => {
 
     const user = result.rows[0];
     user.department = department || null;
+    await pool.query("UPDATE users SET email_verified = false WHERE id = $1", [user.id]);
+    try { await issueVerification(user); } catch (error) { console.error("Registration verification email failed:", error instanceof Error ? error.message : "Unknown email error"); }
+    await sendWelcomeEmail(user);
 
     const token = jwt.sign(
       { userId: user.id, role: user.role },

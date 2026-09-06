@@ -68,6 +68,17 @@ export async function initDb() {
       DROP TABLE IF EXISTS issues CASCADE;
       DROP TABLE IF EXISTS users CASCADE;
       DROP TABLE IF EXISTS departments CASCADE;
+      DROP TABLE IF EXISTS notifications CASCADE;
+      DROP TABLE IF EXISTS email_deliveries CASCADE;
+      DROP TABLE IF EXISTS task_escalations CASCADE;
+      DROP TABLE IF EXISTS escalation_settings CASCADE;
+      DROP TABLE IF EXISTS event_template_subtasks CASCADE;
+      DROP TABLE IF EXISTS event_template_tasks CASCADE;
+      DROP TABLE IF EXISTS event_templates CASCADE;
+      DROP TABLE IF EXISTS password_reset_tokens CASCADE;
+      DROP TABLE IF EXISTS visitor_activity CASCADE;
+      DROP TABLE IF EXISTS visitors CASCADE;
+      DROP TABLE IF EXISTS email_verification_tokens CASCADE;
     `);
 
     // Create Departments Table
@@ -93,8 +104,102 @@ export async function initDb() {
         sms_notifications BOOLEAN DEFAULT true,
         email_notifications BOOLEAN DEFAULT true,
         push_notifications BOOLEAN DEFAULT false,
+        email_verified BOOLEAN DEFAULT true,
         created_at TIMESTAMP DEFAULT NOW()
       );
+    `);
+
+    await client.query(`
+      CREATE TABLE email_verification_tokens (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash CHAR(64) NOT NULL UNIQUE,
+        expires_at TIMESTAMP NOT NULL,
+        used_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX email_verification_tokens_user_idx ON email_verification_tokens (user_id, created_at DESC);
+      CREATE INDEX email_verification_tokens_expiry_idx ON email_verification_tokens (expires_at) WHERE used_at IS NULL;
+    `);
+
+    await client.query(`
+      CREATE TABLE event_templates (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) UNIQUE NOT NULL,
+        description TEXT DEFAULT '',
+        default_duration_minutes INTEGER NOT NULL DEFAULT 120 CHECK (default_duration_minutes > 0),
+        suggested_department_ids INTEGER[] DEFAULT '{}',
+        default_responsible_role VARCHAR(30),
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE TABLE event_template_tasks (
+        id SERIAL PRIMARY KEY,
+        template_id INTEGER NOT NULL REFERENCES event_templates(id) ON DELETE CASCADE,
+        title VARCHAR(255) NOT NULL,
+        description TEXT DEFAULT '',
+        priority VARCHAR(20) DEFAULT 'Medium',
+        responsible_role VARCHAR(30),
+        responsible_department_id INTEGER REFERENCES departments(id) ON DELETE SET NULL,
+        relative_due_hours INTEGER DEFAULT 24,
+        sort_order INTEGER DEFAULT 0
+      );
+      CREATE TABLE event_template_subtasks (
+        id SERIAL PRIMARY KEY,
+        template_task_id INTEGER NOT NULL REFERENCES event_template_tasks(id) ON DELETE CASCADE,
+        title VARCHAR(255) NOT NULL,
+        sort_order INTEGER DEFAULT 0
+      );
+      CREATE INDEX event_template_tasks_template_idx ON event_template_tasks (template_id, sort_order);
+    `);
+
+    await client.query(`
+      CREATE TABLE password_reset_tokens (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash CHAR(64) NOT NULL UNIQUE,
+        expires_at TIMESTAMP NOT NULL,
+        used_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX password_reset_tokens_user_idx ON password_reset_tokens (user_id, created_at DESC);
+      CREATE INDEX password_reset_tokens_expiry_idx ON password_reset_tokens (expires_at) WHERE used_at IS NULL;
+    `);
+
+    // In-app notifications are private to each recipient and deduplicated by key.
+    await client.query(`
+      CREATE TABLE notifications (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        type VARCHAR(50) NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        message TEXT NOT NULL,
+        entity_type VARCHAR(30),
+        entity_id INTEGER,
+        dedupe_key VARCHAR(255) NOT NULL,
+        read_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE (user_id, dedupe_key)
+      );
+      CREATE INDEX notifications_user_unread_idx
+        ON notifications (user_id, created_at DESC) WHERE read_at IS NULL;
+      CREATE INDEX notifications_user_created_idx
+        ON notifications (user_id, created_at DESC);
+    `);
+
+    await client.query(`
+      CREATE TABLE email_deliveries (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        dedupe_key VARCHAR(255) NOT NULL,
+        last_attempt_at TIMESTAMP,
+        sent_at TIMESTAMP,
+        failed_at TIMESTAMP,
+        UNIQUE (user_id, dedupe_key)
+      );
+      CREATE INDEX email_deliveries_pending_idx
+        ON email_deliveries (last_attempt_at) WHERE sent_at IS NULL;
     `);
 
     // Create Events Table
@@ -109,8 +214,46 @@ export async function initDb() {
         coordinator_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
         status VARCHAR(30) DEFAULT 'Draft', -- 'Draft', 'Active', 'Completed', 'Cancelled'
         qr_code_key VARCHAR(100),
+        recurrence_type VARCHAR(20),
+        recurrence_interval INTEGER,
+        recurrence_until TIMESTAMP,
+        recurrence_next_at TIMESTAMP,
+        template_id INTEGER REFERENCES event_templates(id) ON DELETE SET NULL,
         created_at TIMESTAMP DEFAULT NOW()
       );
+    `);
+
+    await client.query(`
+      CREATE TABLE visitors (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(150) NOT NULL,
+        contact VARCHAR(150) NOT NULL,
+        organization VARCHAR(150),
+        purpose TEXT NOT NULL,
+        event_id INTEGER REFERENCES events(id) ON DELETE SET NULL,
+        host_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        expected_arrival TIMESTAMP NOT NULL,
+        check_in_at TIMESTAMP,
+        check_out_at TIMESTAMP,
+        status VARCHAR(20) NOT NULL DEFAULT 'Expected' CHECK (status IN ('Expected','Checked In','Checked Out','Cancelled')),
+        pass_code VARCHAR(80) NOT NULL UNIQUE,
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX visitors_arrival_idx ON visitors (expected_arrival);
+      CREATE INDEX visitors_status_idx ON visitors (status);
+      CREATE INDEX visitors_event_idx ON visitors (event_id);
+      CREATE INDEX visitors_host_idx ON visitors (host_id);
+      CREATE TABLE visitor_activity (
+        id SERIAL PRIMARY KEY,
+        visitor_id INTEGER NOT NULL REFERENCES visitors(id) ON DELETE CASCADE,
+        action VARCHAR(30) NOT NULL,
+        performed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        details TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX visitor_activity_visitor_idx ON visitor_activity (visitor_id, created_at DESC);
     `);
 
     // Create Tasks Table
@@ -126,11 +269,33 @@ export async function initDb() {
         status VARCHAR(30) DEFAULT 'Pending', -- 'Pending', 'In Progress', 'Under Review', 'Completed', 'Rejected'
         progress INTEGER DEFAULT 0,
         due_date TIMESTAMP,
+        is_overdue BOOLEAN DEFAULT false,
+        overdue_at TIMESTAMP,
         proof_url VARCHAR(500),
         approved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       );
+    `);
+
+    await client.query(`
+      CREATE TABLE escalation_settings (
+        id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+        stage_2_hours INTEGER NOT NULL DEFAULT 24 CHECK (stage_2_hours > 0),
+        stage_3_hours INTEGER NOT NULL DEFAULT 48 CHECK (stage_3_hours > 0),
+        updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+      INSERT INTO escalation_settings (id) VALUES (1);
+      CREATE TABLE task_escalations (
+        id SERIAL PRIMARY KEY,
+        task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        stage INTEGER NOT NULL CHECK (stage BETWEEN 1 AND 3),
+        recipient_role VARCHAR(30) NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE (task_id, stage)
+      );
+      CREATE INDEX task_escalations_task_idx ON task_escalations (task_id, created_at DESC);
     `);
 
     // Create Subtasks Table
@@ -247,6 +412,16 @@ export async function initDb() {
         sent_by_user BOOLEAN DEFAULT false,
         created_at TIMESTAMP DEFAULT NOW()
       );
+    `);
+
+    await client.query(`
+      CREATE INDEX users_name_search_idx ON users (LOWER(name));
+      CREATE INDEX users_email_search_idx ON users (LOWER(email));
+      CREATE INDEX departments_name_search_idx ON departments (LOWER(name));
+      CREATE INDEX tasks_title_search_idx ON tasks (LOWER(title));
+      CREATE INDEX events_title_search_idx ON events (LOWER(title));
+      CREATE INDEX tasks_assigned_to_idx ON tasks (assigned_to_id);
+      CREATE INDEX tasks_assigned_dept_idx ON tasks (assigned_dept_id);
     `);
 
     console.log("✅ Database tables created successfully");

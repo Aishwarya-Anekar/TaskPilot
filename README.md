@@ -51,10 +51,18 @@ Create a `.env` file inside the `server/` directory:
 ```env
 DATABASE_URL=postgresql://<user>:<password>@localhost:5432/campus_connect
 JWT_SECRET=campus-connect-jwt-secret-2024
-PORT=5001
+PORT=5000
+APP_URL=http://localhost:8080
+EMAIL_NOTIFICATIONS_ENABLED=false
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your-smtp-username
+SMTP_PASSWORD=your-smtp-password
+EMAIL_FROM=TaskPilot <no-reply@example.com>
 ```
 
-> **Note:** The server is configured to use port `5001` to prevent conflicts with local Python/Flask installations using port `5000`.
+Set `EMAIL_NOTIFICATIONS_ENABLED=true` only after replacing the SMTP example values with credentials from a development mail provider such as Mailtrap, Ethereal, or a Gmail app password. Never commit `server/.env`; it is ignored by Git. Email delivery is recorded in the `email_deliveries` table and deduplicated per user and notification. Users can disable email notifications through their profile preference.
 
 ---
 

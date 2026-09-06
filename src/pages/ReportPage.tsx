@@ -25,6 +25,14 @@ interface Employee {
   department: string | null;
 }
 
+interface EventTemplate {
+  id: number;
+  name: string;
+  description: string;
+  default_duration_minutes: number;
+  tasks: { title: string }[];
+}
+
 export default function ReportPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -42,6 +50,10 @@ export default function ReportPage() {
   const [eventLocation, setEventLocation] = useState("");
   const [eventStart, setEventStart] = useState("");
   const [eventEnd, setEventEnd] = useState("");
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [recurrenceType, setRecurrenceType] = useState("");
+  const [recurrenceInterval, setRecurrenceInterval] = useState("1");
+  const [recurrenceUntil, setRecurrenceUntil] = useState("");
 
   // Task Form State
   const [taskTitle, setTaskTitle] = useState("");
@@ -72,6 +84,12 @@ export default function ReportPage() {
     enabled: !isEmployee,
   });
 
+  const { data: templates = [] } = useQuery<EventTemplate[]>({
+    queryKey: ["eventTemplates"],
+    queryFn: () => apiGet("/templates"),
+    enabled: isAdmin,
+  });
+
   // Handle Submit Event
   const handleCreateEvent = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -81,13 +99,9 @@ export default function ReportPage() {
     }
     setSubmitting(true);
     try {
-      await apiPost("/tasks/events", {
-        title: eventTitle,
-        description: eventDesc,
-        location: eventLocation,
-        start_date: eventStart || undefined,
-        end_date: eventEnd || undefined,
-      });
+      const payload = { title: eventTitle, description: eventDesc, location: eventLocation, start_date: eventStart || undefined, end_date: eventEnd || undefined, recurrence_type: recurrenceType || undefined, recurrence_interval: recurrenceType ? Number(recurrenceInterval) : undefined, recurrence_until: recurrenceUntil || undefined };
+      if (selectedTemplateId) await apiPost(`/templates/${selectedTemplateId}/generate`, payload);
+      else await apiPost("/tasks/events", payload);
       toast.success("Event created successfully");
       navigate("/report/success");
     } catch (err: any) {
@@ -194,6 +208,15 @@ export default function ReportPage() {
                   />
                 </div>
 
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Event Template</label>
+                  <select value={selectedTemplateId} onChange={(e) => { const value = e.target.value; setSelectedTemplateId(value); const template = templates.find((item) => String(item.id) === value); if (template) { setEventTitle(template.name); setEventDesc(template.description); } }} className="w-full px-4 py-2.5 rounded-lg input-focus text-sm text-foreground focus:outline-none">
+                    <option value="">Start from scratch</option>
+                    {templates.map((template) => <option key={template.id} value={template.id}>{template.name} ({template.tasks.length} tasks)</option>)}
+                  </select>
+                  {selectedTemplateId && <p className="text-[11px] text-muted-foreground mt-1">Tasks and checklists will be copied into this event. You can edit them after generation.</p>}
+                </div>
+
                 {/* Event Location */}
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Location</label>
@@ -229,6 +252,11 @@ export default function ReportPage() {
                       className="w-full px-4 py-2.5 rounded-lg input-focus text-sm text-foreground focus:outline-none cursor-pointer"
                     />
                   </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div><label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Recurrence</label><select value={recurrenceType} onChange={(e) => setRecurrenceType(e.target.value)} className="w-full px-3 py-2.5 rounded-lg input-focus text-sm text-foreground"><option value="">One-time</option><option value="yearly">Yearly</option><option value="monthly">Monthly</option><option value="custom">Custom interval</option></select></div>
+                  {recurrenceType && <><div><label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Every</label><input type="number" min="1" value={recurrenceInterval} onChange={(e) => setRecurrenceInterval(e.target.value)} className="w-full px-3 py-2.5 rounded-lg input-focus text-sm text-foreground" /></div><div><label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Repeat Until</label><input type="date" value={recurrenceUntil} onChange={(e) => setRecurrenceUntil(e.target.value)} className="w-full px-3 py-2.5 rounded-lg input-focus text-sm text-foreground" /></div></>}
                 </div>
 
                 {/* Event Description */}

@@ -1,6 +1,7 @@
 import { Router, Response } from "express";
 import pool from "../db.js";
 import { authenticate, AuthRequest } from "../middleware/auth.js";
+import { createNotifications } from "../notifications.js";
 
 const router = Router();
 
@@ -49,6 +50,20 @@ router.post("/announcements", authenticate, async (req: AuthRequest, res: Respon
        RETURNING *`,
       [title, content, req.userId, target_dept_id || null]
     );
+
+    const recipients = await pool.query(
+      `SELECT id FROM users WHERE id != $1 AND ($2::integer IS NULL OR department_id = $2)`,
+      [req.userId, target_dept_id || null]
+    );
+    await createNotifications(recipients.rows.map((recipient) => ({
+      userId: recipient.id,
+      type: "new_announcement",
+      title: "New announcement",
+      message: title,
+      entityType: "announcement",
+      entityId: result.rows[0].id,
+      dedupeKey: `announcement:${result.rows[0].id}`,
+    })));
 
     res.status(201).json(result.rows[0]);
   } catch (err) {

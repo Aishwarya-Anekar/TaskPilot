@@ -16,6 +16,13 @@ import ProfilePage from "./pages/ProfilePage";
 import AdminPage from "./pages/AdminPage";
 import LandingPage from "./pages/LandingPage";
 import NotFound from "./pages/NotFound";
+import ResetPasswordPage from "./pages/ResetPasswordPage";
+import VerifyEmailPage from "./pages/VerifyEmailPage";
+import NotificationPage from "./pages/NotificationPage";
+import EventTemplatesPage from "./pages/EventTemplatesPage";
+import ReportsPage from "./pages/ReportsPage";
+import CalendarPage from "./pages/CalendarPage";
+import VisitorsPage from "./pages/VisitorsPage";
 
 const queryClient = new QueryClient();
 
@@ -69,6 +76,8 @@ const App = () => (
           <Routes>
             {/* Public routes */}
             <Route path="/" element={<PublicRoute><LandingPage /></PublicRoute>} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
+            <Route path="/verify-email" element={<VerifyEmailPage />} />
 
             {/* Protected routes */}
             <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
@@ -80,6 +89,11 @@ const App = () => (
               <Route path="/communication" element={<CommunicationPage />} />
               <Route path="/history" element={<HistoryPage />} />
               <Route path="/profile" element={<ProfilePage />} />
+              <Route path="/notifications" element={<NotificationPage />} />
+              <Route path="/reports" element={<ReportsPage />} />
+              <Route path="/calendar" element={<CalendarPage />} />
+              <Route path="/visitors" element={<VisitorsPage />} />
+              <Route path="/event-templates" element={<AdminRoute><EventTemplatesPage /></AdminRoute>} />
               <Route path="/admin" element={<AdminRoute><AdminPage /></AdminRoute>} />
             </Route>
 

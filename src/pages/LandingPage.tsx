@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Loader2, Briefcase, CheckCircle2, ArrowRight } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { apiPost } from "@/lib/api";
 
 export default function LandingPage() {
   const navigate = useNavigate();
@@ -17,18 +18,22 @@ export default function LandingPage() {
   const [role, setRole] = useState("employee");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [forgotMode, setForgotMode] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setLoading(true);
     try {
-      if (isLogin) {
+      if (forgotMode) {
+        await apiPost("/auth/forgot-password", { email });
+        setError("If an account exists for that email, a password reset link has been sent.");
+      } else if (isLogin) {
         await login(email, password);
       } else {
         await register({ name, email, password, department, role });
       }
-      navigate("/dashboard");
+      if (!forgotMode) navigate("/dashboard");
     } catch (err: any) {
       setError(err.message || "Authentication failed");
     } finally {
@@ -113,10 +118,10 @@ export default function LandingPage() {
           >
             <div className="text-center space-y-1 mb-4">
               <h1 className="text-2xl font-bold text-foreground">
-                {isLogin ? "Welcome to TaskPilot" : "Register Employee"}
+                {forgotMode ? "Reset your password" : isLogin ? "Welcome to TaskPilot" : "Register Employee"}
               </h1>
               <p className="text-sm text-muted-foreground">
-                {isLogin ? "Sign in to your collaboration workspace" : "Register a new profile in the platform"}
+                {forgotMode ? "Enter your registered email address" : isLogin ? "Sign in to your collaboration workspace" : "Register a new profile in the platform"}
               </p>
             </div>
 
@@ -135,7 +140,7 @@ export default function LandingPage() {
 
             <form onSubmit={handleSubmit} className="space-y-3.5">
               <AnimatePresence mode="popLayout">
-                {!isLogin && (
+                {!isLogin && !forgotMode && (
                   <motion.div
                     initial={{ opacity: 0, height: 0 }}
                     animate={{ opacity: 1, height: "auto" }}
@@ -169,7 +174,7 @@ export default function LandingPage() {
                 />
               </div>
 
-              <div>
+              {!forgotMode && <div>
                 <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1 font-medium text-foreground">Password</label>
                 <input
                   type="password"
@@ -180,7 +185,7 @@ export default function LandingPage() {
                   minLength={6}
                   className="w-full px-3.5 py-2.5 rounded-lg input-focus text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
                 />
-              </div>
+              </div>}
 
               <AnimatePresence mode="popLayout">
                 {!isLogin && (
@@ -228,22 +233,23 @@ export default function LandingPage() {
                 className="w-full py-3 mt-2 rounded-lg btn-gradient text-primary-foreground font-semibold shadow-lg shadow-primary/20 hover:shadow-xl hover:shadow-primary/30 transition-all duration-200 disabled:opacity-70 flex items-center justify-center gap-2 group text-sm"
               >
                 {loading && <Loader2 size={16} className="animate-spin" />}
-                {!loading && <span>{isLogin ? "Sign In" : "Register Profile"}</span>}
+                {!loading && <span>{forgotMode ? "Send reset link" : isLogin ? "Sign In" : "Register Profile"}</span>}
                 {!loading && <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />}
               </motion.button>
             </form>
 
             <div className="pt-3 border-t border-border flex flex-col items-center justify-center space-y-3">
               <p className="text-xs text-muted-foreground">
-                {isLogin ? "Need a new profile?" : "Already have an account?"}
+                {forgotMode ? "Remembered your password?" : isLogin ? "Need a new profile?" : "Already have an account?"}
               </p>
               <button
                 type="button"
-                onClick={toggleMode}
+                onClick={() => { if (forgotMode) { setForgotMode(false); setError(""); } else toggleMode(); }}
                 className="w-full py-2 rounded-lg border border-input bg-transparent hover:bg-secondary text-foreground font-medium transition-colors text-xs"
               >
-                {isLogin ? "Create test account" : "Sign in instead"}
+                {forgotMode ? "Sign in instead" : isLogin ? "Create test account" : "Sign in instead"}
               </button>
+              {isLogin && !forgotMode && <button type="button" onClick={() => { setForgotMode(true); setError(""); }} className="text-xs text-accent hover:underline">Forgot Password?</button>}
             </div>
 
             {isLogin && (

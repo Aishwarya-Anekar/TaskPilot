@@ -44,6 +44,9 @@ interface TaskDetails {
   event_title: string;
   event_location: string;
   qr_code_key: string;
+  is_overdue: boolean;
+  overdue_at: string | null;
+  escalations: { stage: number; recipient_role: string; created_at: string }[];
 }
 
 interface MeetingNote {
@@ -271,6 +274,7 @@ export default function TrackDetailsPage() {
           <span className="text-xs bg-accent/10 text-accent font-semibold px-3.5 py-1.5 rounded-full uppercase tracking-wider">
             {task.status}
           </span>
+          {task.is_overdue && <span className="text-xs bg-destructive/10 text-destructive font-semibold px-3.5 py-1.5 rounded-full uppercase tracking-wider">Overdue</span>}
         </div>
 
         {/* Status Timeline */}
@@ -320,6 +324,23 @@ export default function TrackDetailsPage() {
             ))}
           </div>
         </motion.div>
+
+        {task.is_overdue && (
+          <div className="bg-destructive/5 border border-destructive/20 rounded-xl p-5 space-y-3">
+            <div>
+              <h2 className="font-bold text-destructive text-sm uppercase tracking-wider">Escalation Status</h2>
+              <p className="text-xs text-muted-foreground mt-1">This task remains incomplete after its deadline. Escalations are handled automatically.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {task.escalations.length === 0 && <span className="text-xs text-muted-foreground">Stage 1 is pending.</span>}
+              {task.escalations.map((escalation) => (
+                <span key={escalation.stage} className="text-xs px-3 py-1.5 rounded-lg bg-card border border-destructive/20 text-foreground">
+                  Stage {escalation.stage}: {escalation.recipient_role.replace("_", " ")} notified
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="grid md:grid-cols-3 gap-6">
           <div className="md:col-span-2 space-y-6">

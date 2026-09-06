@@ -1,4 +1,4 @@
-import { Home, FileText, Search, MessageSquare, Clock, User, Shield, Menu, ChevronLeft, LogOut } from "lucide-react";
+import { Home, FileText, Search, MessageSquare, Clock, User, Shield, Bell, Copy, BarChart3, CalendarDays, UsersRound, Menu, ChevronLeft, LogOut } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -31,10 +31,14 @@ export function AppSidebar() {
       : []),
     { title: "Events & Tasks", icon: Search, path: "/track" },
     { title: "Collaboration", icon: MessageSquare, path: "/communication" },
+    { title: "Notifications", icon: Bell, path: "/notifications" },
+    { title: "Reports", icon: BarChart3, path: "/reports" },
+    { title: "Calendar", icon: CalendarDays, path: "/calendar" },
+    ...((user?.role === "admin" || user?.role === "super_admin" || user?.role === "dept_head") ? [{ title: "Visitors", icon: UsersRound, path: "/visitors" }] : []),
     { title: "History", icon: Clock, path: "/history" },
     { title: "Profile", icon: User, path: "/profile" },
     ...((user?.role === "admin" || user?.role === "super_admin")
-      ? [{ title: "Management", icon: Shield, path: "/admin" }]
+      ? [{ title: "Management", icon: Shield, path: "/admin" }, { title: "Event Templates", icon: Copy, path: "/event-templates" }]
       : []),
   ];
 

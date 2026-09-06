@@ -22,6 +22,7 @@ interface Employee {
   role: string;
   department: string | null;
   department_id: number | null;
+  email_verified: boolean;
 }
 
 interface Resource {
@@ -48,6 +49,11 @@ interface SystemLog {
   action: string;
   details: string;
   created_at: string;
+}
+
+interface EscalationSettings {
+  stage_2_hours: number;
+  stage_3_hours: number;
 }
 
 export default function AdminPage() {
@@ -87,6 +93,8 @@ export default function AdminPage() {
   const [enableNotifs, setEnableNotifs] = useState(() => localStorage.getItem("sys_enable_notifs") !== "false");
   const [orgName, setOrgName] = useState(() => localStorage.getItem("sys_org_name") || "TaskPilot Organization");
   const [systemEmail, setSystemEmail] = useState(() => localStorage.getItem("sys_email") || "support@taskpilot.com");
+  const [stage2Hours, setStage2Hours] = useState("24");
+  const [stage3Hours, setStage3Hours] = useState("48");
 
   const handleSaveSettings = () => {
     localStorage.setItem("sys_maintenance", String(maintenanceMode));
@@ -150,6 +158,29 @@ export default function AdminPage() {
     enabled: isSuperAdmin,
   });
 
+  const { data: escalationSettings } = useQuery<EscalationSettings>({
+    queryKey: ["escalationSettings"],
+    queryFn: () => apiGet("/admin/escalation-settings"),
+    enabled: activeTab === "settings",
+  });
+
+  useEffect(() => {
+    if (escalationSettings) {
+      setStage2Hours(String(escalationSettings.stage_2_hours));
+      setStage3Hours(String(escalationSettings.stage_3_hours));
+    }
+  }, [escalationSettings]);
+
+  const handleSaveEscalation = async () => {
+    try {
+      await apiPut("/admin/escalation-settings", { stage_2_hours: Number(stage2Hours), stage_3_hours: Number(stage3Hours) });
+      queryClient.invalidateQueries({ queryKey: ["escalationSettings"] });
+      toast.success("Escalation intervals updated!");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to update escalation intervals");
+    }
+  };
+
   const allResources = resourcesData?.resources || [];
   const allBookings = resourcesData?.bookings || [];
 
@@ -197,6 +228,11 @@ export default function AdminPage() {
     }
   };
 
+  const resendVerification = async (id: number) => {
+    try { await apiPost(`/admin/employees/${id}/resend-verification`, {}); toast.success("Verification email request processed"); }
+    catch (err: any) { toast.error(err.message || "Failed to resend verification"); }
+  };
+
   // Create Resource
   const handleCreateResource = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -235,7 +271,7 @@ export default function AdminPage() {
                 <ShieldAlert size={14} /> Audit Logs
               </button>
             )}
-            {isSuperAdmin && (
+            {(user?.role === "admin" || isSuperAdmin) && (
               <button
                 onClick={() => setActiveTab("settings")}
                 className={`flex items-center gap-1.5 px-4 py-1.5 rounded-md text-xs font-semibold transition-all ${
@@ -476,6 +512,7 @@ export default function AdminPage() {
                           <th className="p-3 font-bold uppercase">Email</th>
                           <th className="p-3 font-bold uppercase">Role</th>
                           <th className="p-3 font-bold uppercase">Department</th>
+                          <th className="p-3 font-bold uppercase">Email Status</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-border text-muted-foreground">
@@ -485,6 +522,7 @@ export default function AdminPage() {
                             <td className="p-3">{emp.email}</td>
                             <td className="p-3 capitalize">{emp.role.replace('_', ' ')}</td>
                             <td className="p-3 font-medium text-foreground">{emp.department || "—"}</td>
+                            <td className="p-3"><button disabled={emp.email_verified} onClick={() => resendVerification(emp.id)} className={`text-[10px] font-semibold uppercase ${emp.email_verified ? "text-success" : "text-warning hover:underline"}`}>{emp.email_verified ? "Verified" : "Resend verification"}</button></td>
                           </tr>
                         ))}
                       </tbody>
@@ -692,6 +730,16 @@ export default function AdminPage() {
                           className="w-4 h-4 text-accent border-border/50 rounded focus:ring-0 cursor-pointer"
                         />
                       </div>
+                    </div>
+
+                    <div className="bg-secondary/10 border border-border/50 p-4 rounded-xl space-y-3">
+                      <h3 className="font-bold text-xs uppercase tracking-wider text-foreground">Automatic Task Escalation</h3>
+                      <p className="text-[10px] text-muted-foreground">Intervals start when an incomplete task crosses its deadline.</p>
+                      <div className="grid grid-cols-2 gap-3">
+                        <label className="text-xs text-muted-foreground">Stage 2 (hours)<input type="number" min="1" value={stage2Hours} onChange={(e) => setStage2Hours(e.target.value)} className="mt-1 w-full bg-secondary/30 text-foreground border border-border/50 p-2 rounded-lg" /></label>
+                        <label className="text-xs text-muted-foreground">Stage 3 (hours)<input type="number" min="2" value={stage3Hours} onChange={(e) => setStage3Hours(e.target.value)} className="mt-1 w-full bg-secondary/30 text-foreground border border-border/50 p-2 rounded-lg" /></label>
+                      </div>
+                      <button onClick={handleSaveEscalation} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold btn-gradient text-primary-foreground"><Check size={14} /> Save Escalation</button>
                     </div>
 
                     <button

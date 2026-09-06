@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
 import { PageTransition } from "@/components/motion/PageTransition";
@@ -16,6 +16,7 @@ interface Task {
   progress: number;
   priority: string;
   due_date: string;
+  is_overdue: boolean;
   event_title: string | null;
   assigned_to_name: string | null;
   assigned_dept_name: string | null;
@@ -43,8 +44,9 @@ const progressColors: Record<string, string> = {
 };
 
 export default function TrackPage() {
+  const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState("All");
-  const [selectedEventId, setSelectedEventId] = useState("");
+  const [selectedEventId, setSelectedEventId] = useState(searchParams.get("event_id") || "");
 
   const { data: events = [] } = useQuery<EventItem[]>({
     queryKey: ["allEventsForFilter"],
@@ -147,6 +149,7 @@ export default function TrackPage() {
                         }`}>
                           {task.priority} Priority
                         </span>
+                        {task.is_overdue && <span className="text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-destructive/10 text-destructive">Overdue</span>}
                       </div>
                       <h3 className="font-semibold text-sm text-foreground">
                         {task.title}
