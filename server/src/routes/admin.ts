@@ -10,6 +10,7 @@ import { createNotifications, notifyTaskAudience } from "../notifications.js";
 import { sendWelcomeEmail } from "../email.js";
 import crypto from "crypto";
 import { sendVerificationEmail } from "../email.js";
+import { isEmail, isNonEmptyString, parsePositiveId, passwordError, isOneOf, USER_ROLES } from "../validation.js";
 
 const router = Router();
 
@@ -287,12 +288,38 @@ router.post("/employees/:id/resend-verification", requireAdmin, async (req: Auth
 router.post("/employees", requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
     const { name, email, password, role, department_id } = req.body;
-    if (!name || !email || !password || !role) {
+    if (!isNonEmptyString(name) || !isNonEmptyString(email) || !isNonEmptyString(password) || !isNonEmptyString(role)) {
       res.status(400).json({ error: "Name, email, password, and role are required" });
       return;
     }
+    if (!isEmail(email)) {
+      res.status(400).json({ error: "A valid email address is required" });
+      return;
+    }
+    const passwordIssue = passwordError(password);
+    if (passwordIssue) {
+      res.status(400).json({ error: passwordIssue });
+      return;
+    }
+    if (!isOneOf(role, USER_ROLES) || role === "super_admin") {
+      res.status(400).json({ error: "Invalid user role" });
+      return;
+    }
+    const departmentId = department_id == null || department_id === "" ? null : parsePositiveId(department_id);
+    if (department_id != null && department_id !== "" && !departmentId) {
+      res.status(400).json({ error: "Department ID must be a valid positive integer" });
+      return;
+    }
+    if (departmentId) {
+      const department = await pool.query("SELECT id FROM departments WHERE id = $1", [departmentId]);
+      if (!department.rows.length) {
+        res.status(404).json({ error: "Department not found" });
+        return;
+      }
+    }
+    const normalizedEmail = email.trim().toLowerCase();
 
-    const check = await pool.query("SELECT id FROM users WHERE email = $1", [email]);
+    const check = await pool.query("SELECT id FROM users WHERE LOWER(email) = $1", [normalizedEmail]);
     if (check.rows.length > 0) {
       res.status(409).json({ error: "Email already exists" });
       return;
@@ -302,7 +329,7 @@ router.post("/employees", requireAdmin, async (req: AuthRequest, res: Response) 
     const result = await pool.query(
       `INSERT INTO users (name, email, password_hash, role, department_id, email_verified)
       VALUES ($1, $2, $3, $4, $5, false) RETURNING id, name, email, role, department_id`,
-          [name, email, hash, role, department_id || null]
+              [name.trim(), normalizedEmail, hash, role, departmentId]
     );
 
     await pool.query(
@@ -330,6 +357,21 @@ router.put("/employees/:id", requireAdmin, async (req: AuthRequest, res: Respons
   try {
     const { id } = req.params;
     const { name, email, role, department_id } = req.body;
+    const userId = parsePositiveId(id);
+    if (!userId) return res.status(400).json({ error: "User ID must be a valid positive integer" });
+    if (name !== undefined && !isNonEmptyString(name)) return res.status(400).json({ error: "Name cannot be empty" });
+    if (email !== undefined && !isEmail(email)) return res.status(400).json({ error: "A valid email address is required" });
+    if (role !== undefined && (!isOneOf(role, USER_ROLES) || role === "super_admin")) return res.status(400).json({ error: "Invalid user role" });
+    const departmentId = department_id === undefined || department_id === null || department_id === "" ? department_id : parsePositiveId(department_id);
+    if (department_id !== undefined && department_id !== null && department_id !== "" && !departmentId) return res.status(400).json({ error: "Department ID must be a valid positive integer" });
+    if (departmentId) {
+      const department = await pool.query("SELECT id FROM departments WHERE id = $1", [departmentId]);
+      if (!department.rows.length) return res.status(404).json({ error: "Department not found" });
+    }
+    if (email !== undefined) {
+      const duplicate = await pool.query("SELECT id FROM users WHERE LOWER(email) = $1 AND id <> $2", [email.trim().toLowerCase(), userId]);
+      if (duplicate.rows.length) return res.status(409).json({ error: "Email already exists" });
+    }
 
     const result = await pool.query(
       `UPDATE users SET
@@ -338,7 +380,7 @@ router.put("/employees/:id", requireAdmin, async (req: AuthRequest, res: Respons
         role = COALESCE($3, role),
         department_id = COALESCE($4, department_id)
        WHERE id = $5 RETURNING id, name, email, role, department_id`,
-      [name, email, role, department_id, id]
+      [name === undefined ? null : name.trim(), email === undefined ? null : email.trim().toLowerCase(), role, departmentId, userId]
     );
 
     if (result.rows.length === 0) {
@@ -430,10 +472,23 @@ router.post("/resources/book", async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    const resourceId = Number(resource_id);
-    const eventId = Number(event_id);
-    if (!Number.isInteger(resourceId) || resourceId <= 0 || !Number.isInteger(eventId) || eventId <= 0) {
+    const resourceId = parsePositiveId(resource_id);
+    const eventId = parsePositiveId(event_id);
+    if (!resourceId || !eventId) {
       res.status(400).json({ error: "Resource ID and Event ID must be valid positive integers" });
+      return;
+    }
+
+    const references = await pool.query(
+      "SELECT (SELECT COUNT(*) FROM resources WHERE id = $1) AS resource_count, (SELECT COUNT(*) FROM events WHERE id = $2) AS event_count",
+      [resourceId, eventId]
+    );
+    if (Number(references.rows[0].resource_count) === 0) {
+      res.status(404).json({ error: "Resource not found" });
+      return;
+    }
+    if (Number(references.rows[0].event_count) === 0) {
+      res.status(404).json({ error: "Event not found" });
       return;
     }
 
@@ -509,11 +564,21 @@ router.put("/resources/bookings/:id", requireAdmin, async (req: AuthRequest, res
     }
 
     const existing = existingResult.rows[0];
-    const resourceId = resource_id === undefined ? existing.resource_id : Number(resource_id);
-    const eventId = event_id === undefined ? existing.event_id : Number(event_id);
-    if (!Number.isInteger(resourceId) || resourceId <= 0 || !Number.isInteger(eventId) || eventId <= 0) {
+    const resourceId = resource_id === undefined ? existing.resource_id : parsePositiveId(resource_id);
+    const eventId = event_id === undefined ? existing.event_id : parsePositiveId(event_id);
+    if (!resourceId || !eventId) {
       await client.query("ROLLBACK");
       res.status(400).json({ error: "Resource ID and Event ID must be valid positive integers" });
+      return;
+    }
+
+    const references = await client.query(
+      "SELECT (SELECT COUNT(*) FROM resources WHERE id = $1) AS resource_count, (SELECT COUNT(*) FROM events WHERE id = $2) AS event_count",
+      [resourceId, eventId]
+    );
+    if (Number(references.rows[0].resource_count) === 0 || Number(references.rows[0].event_count) === 0) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: Number(references.rows[0].resource_count) === 0 ? "Resource not found" : "Event not found" });
       return;
     }
 

@@ -1,6 +1,7 @@
 import { Router, Response } from "express";
 import pool from "../db.js";
 import { authenticate, AuthRequest } from "../middleware/auth.js";
+import { isNonEmptyString, validateDateRange } from "../validation.js";
 
 const router = Router();
 router.use(authenticate);
@@ -99,13 +100,17 @@ router.post("/:id/generate", async (req: AuthRequest, res: Response) => {
     const { title, description, location, start_date, end_date, recurrence_type, recurrence_interval, recurrence_until } = req.body;
     const template = await client.query("SELECT * FROM event_templates WHERE id = $1", [req.params.id]);
     if (!template.rows.length) return res.status(404).json({ error: "Template not found" });
+    const eventTitle = title ?? template.rows[0].name;
+    if (!isNonEmptyString(eventTitle)) return res.status(400).json({ error: "Event title is required" });
+    const dateError = validateDateRange(start_date, end_date, true);
+    if (dateError) return res.status(400).json({ error: dateError });
     const items = await client.query("SELECT * FROM event_template_tasks WHERE template_id = $1 ORDER BY sort_order", [req.params.id]);
     await client.query("BEGIN");
     const nextAt = recurrence_type && start_date ? new Date(start_date) : null;
     if (nextAt && recurrence_type === "yearly") nextAt.setFullYear(nextAt.getFullYear() + (Number(recurrence_interval) || 1));
     if (nextAt && recurrence_type === "monthly") nextAt.setMonth(nextAt.getMonth() + (Number(recurrence_interval) || 1));
     if (nextAt && recurrence_type === "custom") nextAt.setDate(nextAt.getDate() + (Number(recurrence_interval) || 1));
-    const event = await client.query(`INSERT INTO events (title,description,location,start_date,end_date,coordinator_id,status,qr_code_key,recurrence_type,recurrence_interval,recurrence_until,recurrence_next_at,template_id) VALUES ($1,$2,$3,$4,$5,$6,'Draft',$7,$8,$9,$10,$11,$12) RETURNING *`, [title || template.rows[0].name, description ?? template.rows[0].description, location || "", start_date || null, end_date || null, req.userId, `qr_${Date.now()}`, recurrence_type || null, recurrence_interval || null, recurrence_until || null, nextAt, req.params.id]);
+    const event = await client.query(`INSERT INTO events (title,description,location,start_date,end_date,coordinator_id,status,qr_code_key,recurrence_type,recurrence_interval,recurrence_until,recurrence_next_at,template_id) VALUES ($1,$2,$3,$4,$5,$6,'Draft',$7,$8,$9,$10,$11,$12) RETURNING *`, [eventTitle.trim(), description ?? template.rows[0].description, location || "", start_date, end_date, req.userId, `qr_${Date.now()}`, recurrence_type || null, recurrence_interval || null, recurrence_until || null, nextAt, req.params.id]);
     for (const item of items.rows) {
       const task = await client.query(`INSERT INTO tasks (event_id,title,description,priority,due_date,assigned_dept_id,status,progress) VALUES ($1,$2,$3,$4,CASE WHEN $5::timestamp IS NULL THEN NULL ELSE $5::timestamp + ($6::integer * INTERVAL '1 hour') END,$7,'Pending',0) RETURNING id`, [event.rows[0].id,item.title,item.description,item.priority,end_date || start_date || null,item.relative_due_hours,item.responsible_department_id]);
       const subtasks = await client.query("SELECT title FROM event_template_subtasks WHERE template_task_id = $1 ORDER BY sort_order", [item.id]);

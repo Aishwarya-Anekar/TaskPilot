@@ -417,7 +417,7 @@ export async function initDb() {
     });
 
     // Seed users
-    const hash = await bcrypt.hash("admin123", 10);
+    const hash = await bcrypt.hash("TaskPilot@2026", 10);
 
     const ensureUser = async (name: string, email: string, role: string, departmentId?: number) => {
       await client.query(

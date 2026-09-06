@@ -6,6 +6,7 @@ import { authenticate, AuthRequest } from "../middleware/auth.js";
 import { sendWelcomeEmail, sendVerificationEmail } from "../email.js";
 import { sendPasswordResetEmail } from "../email.js";
 import crypto from "crypto";
+import { isEmail, isNonEmptyString, passwordError } from "../validation.js";
 
 const router = Router();
 
@@ -68,7 +69,8 @@ router.post("/forgot-password", async (req: any, res: Response) => {
 router.post("/reset-password", async (req: any, res: Response) => {
   try {
     const { token, password, confirmPassword } = req.body;
-    if (typeof token !== "string" || typeof password !== "string" || password !== confirmPassword || password.length < 8 || !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password)) return res.status(400).json({ error: "Use matching passwords with 8+ characters, uppercase, lowercase, and a number." });
+    const passwordIssue = passwordError(password);
+    if (typeof token !== "string" || !token || passwordIssue || password !== confirmPassword) return res.status(400).json({ error: passwordIssue || "Passwords must match" });
     const hash = crypto.createHash("sha256").update(token).digest("hex");
     const result = await pool.query("SELECT id, user_id FROM password_reset_tokens WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()", [hash]);
     if (!result.rows.length) return res.status(400).json({ error: "This reset link is invalid or expired." });
@@ -82,15 +84,29 @@ router.post("/reset-password", async (req: any, res: Response) => {
 router.post("/register", async (req, res: Response) => {
   try {
     const { name, email, password, department, role, semester } = req.body;
-    if (!name || !email || !password) {
+    if (!isNonEmptyString(name) || !isNonEmptyString(email) || !isNonEmptyString(password)) {
       res.status(400).json({ error: "Name, email, and password are required" });
       return;
     }
+    if (!isEmail(email)) {
+      res.status(400).json({ error: "A valid email address is required" });
+      return;
+    }
+    const passwordIssue = passwordError(password);
+    if (passwordIssue) {
+      res.status(400).json({ error: passwordIssue });
+      return;
+    }
+    if (role !== undefined && role !== "employee") {
+      res.status(400).json({ error: "Public registration only supports the employee role" });
+      return;
+    }
+    const normalizedEmail = email.trim().toLowerCase();
 
     // Check existing user
     const existing = await pool.query(
       "SELECT id FROM users WHERE email = $1",
-      [email]
+      [normalizedEmail]
     );
     if (existing.rows.length > 0) {
       res.status(409).json({ error: "Email already registered" });
@@ -114,7 +130,7 @@ router.post("/register", async (req, res: Response) => {
     const result = await pool.query(
       `INSERT INTO users (name, email, password_hash, role, department_id, semester)
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, name, email, role, semester`,
-      [name, email, hash, targetRole, deptId, semester || null]
+      [name.trim(), normalizedEmail, hash, targetRole, deptId, semester || null]
     );
 
     const user = result.rows[0];
@@ -140,7 +156,7 @@ router.post("/register", async (req, res: Response) => {
 router.post("/login", async (req, res: Response) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) {
+    if (!isEmail(email) || typeof password !== "string" || !password) {
       res.status(400).json({ error: "Email and password are required" });
       return;
     }
@@ -150,7 +166,7 @@ router.post("/login", async (req, res: Response) => {
        FROM users u
        LEFT JOIN departments d ON u.department_id = d.id
        WHERE u.email = $1`,
-      [email]
+      [email.trim().toLowerCase()]
     );
     if (result.rows.length === 0) {
       res.status(401).json({ error: "Invalid credentials" });
@@ -217,6 +233,11 @@ router.put("/me", authenticate, async (req: AuthRequest, res: Response) => {
 
     // If changing password, verify current first
     if (new_password) {
+      const passwordIssue = passwordError(new_password);
+      if (passwordIssue) {
+        res.status(400).json({ error: passwordIssue });
+        return;
+      }
       if (!current_password) {
         res.status(400).json({ error: "Current password required" });
         return;
@@ -259,8 +280,9 @@ router.put("/me", authenticate, async (req: AuthRequest, res: Response) => {
     let idx = 1;
 
     if (name !== undefined) {
+      if (!isNonEmptyString(name)) return res.status(400).json({ error: "Name cannot be empty" });
       queryParts.push(`name = $${idx++}`);
-      params.push(name);
+      params.push(name.trim());
     }
     if (deptId !== undefined) {
       queryParts.push(`department_id = $${idx++}`);
@@ -271,14 +293,17 @@ router.put("/me", authenticate, async (req: AuthRequest, res: Response) => {
       params.push(semester);
     }
     if (sms_notifications !== undefined) {
+      if (typeof sms_notifications !== "boolean") return res.status(400).json({ error: "sms_notifications must be boolean" });
       queryParts.push(`sms_notifications = $${idx++}`);
       params.push(sms_notifications);
     }
     if (email_notifications !== undefined) {
+      if (typeof email_notifications !== "boolean") return res.status(400).json({ error: "email_notifications must be boolean" });
       queryParts.push(`email_notifications = $${idx++}`);
       params.push(email_notifications);
     }
     if (push_notifications !== undefined) {
+      if (typeof push_notifications !== "boolean") return res.status(400).json({ error: "push_notifications must be boolean" });
       queryParts.push(`push_notifications = $${idx++}`);
       params.push(push_notifications);
     }

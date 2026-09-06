@@ -5,6 +5,15 @@ import { fileURLToPath } from "url";
 import pool from "../db.js";
 import { authenticate, AuthRequest } from "../middleware/auth.js";
 import { notifyTaskAudience } from "../notifications.js";
+import {
+  EVENT_STATUSES,
+  TASK_PRIORITIES,
+  TASK_STATUSES,
+  isOneOf,
+  isNonEmptyString,
+  parsePositiveId,
+  validateDateRange,
+} from "../validation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -48,17 +57,37 @@ router.post("/events", authenticate, async (req: AuthRequest, res: Response) => 
     }
 
     const { title, description, location, start_date, end_date, coordinator_id, status } = req.body;
-    if (!title) {
+    if (!isNonEmptyString(title)) {
       res.status(400).json({ error: "Event title is required" });
       return;
     }
+    const dateError = validateDateRange(start_date, end_date, true);
+    if (dateError) {
+      res.status(400).json({ error: dateError });
+      return;
+    }
+    if (status !== undefined && !isOneOf(status, EVENT_STATUSES)) {
+      res.status(400).json({ error: "Invalid event status" });
+      return;
+    }
+    const coordinatorId = coordinator_id === undefined ? req.userId : parsePositiveId(coordinator_id);
+    if (!coordinatorId) {
+      res.status(400).json({ error: "Coordinator ID must be a valid positive integer" });
+      return;
+    }
+    const coordinator = await pool.query("SELECT id FROM users WHERE id = $1", [coordinatorId]);
+    if (!coordinator.rows.length) {
+      res.status(404).json({ error: "Coordinator not found" });
+      return;
+    }
 
-    const qrKey = `qr_${title.replace(/\s+/g, "_").toLowerCase()}_${Date.now()}`;
+    const cleanTitle = title.trim();
+    const qrKey = `qr_${cleanTitle.replace(/\s+/g, "_").toLowerCase()}_${Date.now()}`;
     const result = await pool.query(
       `INSERT INTO events (title, description, location, start_date, end_date, coordinator_id, status, qr_code_key)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-      [title, description || "", location || "", start_date || null, end_date || null, coordinator_id || req.userId, status || "Draft", qrKey]
+      [cleanTitle, typeof description === "string" ? description.trim() : "", typeof location === "string" ? location.trim() : "", start_date, end_date, coordinatorId, status || "Draft", qrKey]
     );
 
     // Create activity log
@@ -466,13 +495,32 @@ router.post("/", authenticate, async (req: AuthRequest, res: Response) => {
     }
 
     const { event_id, title, description, assigned_to_id, assigned_dept_id, priority, due_date } = req.body;
-    if (!title || !event_id) {
+    const eventId = parsePositiveId(event_id);
+    if (!isNonEmptyString(title) || !eventId) {
       res.status(400).json({ error: "Title and Event ID are required" });
+      return;
+    }
+    if (priority !== undefined && !isOneOf(priority, TASK_PRIORITIES)) {
+      res.status(400).json({ error: "Invalid task priority" });
+      return;
+    }
+    if (due_date === undefined || due_date === null || due_date === "") {
+      res.status(400).json({ error: "Due date is required" });
+      return;
+    }
+    if (!Number.isFinite(Date.parse(String(due_date)))) {
+      res.status(400).json({ error: "Due date must be a valid timestamp" });
+      return;
+    }
+    const assignedToId = assigned_to_id == null ? null : parsePositiveId(assigned_to_id);
+    const assignedDeptId = assigned_dept_id == null ? null : parsePositiveId(assigned_dept_id);
+    if (assigned_to_id != null && !assignedToId || assigned_dept_id != null && !assignedDeptId) {
+      res.status(400).json({ error: "Assignment IDs must be valid positive integers" });
       return;
     }
 
     // Check event exists
-    const eventRes = await pool.query("SELECT title FROM events WHERE id = $1", [event_id]);
+    const eventRes = await pool.query("SELECT title FROM events WHERE id = $1", [eventId]);
     if (eventRes.rows.length === 0) {
       res.status(404).json({ error: "Event not found" });
       return;
@@ -483,11 +531,11 @@ router.post("/", authenticate, async (req: AuthRequest, res: Response) => {
        VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', 0)
        RETURNING *`,
       [
-        event_id,
-        title,
-        description || "",
-        assigned_to_id || null,
-        assigned_dept_id || null,
+        eventId,
+        title.trim(),
+        typeof description === "string" ? description.trim() : "",
+        assignedToId,
+        assignedDeptId,
         priority || "Medium",
         due_date || null
       ]
@@ -537,6 +585,26 @@ router.put("/:id", authenticate, upload.single("proof"), async (req: AuthRequest
 
     const originalTask = taskCheck.rows[0];
 
+    if (status !== undefined && !isOneOf(status, TASK_STATUSES)) {
+      res.status(400).json({ error: "Invalid task status" });
+      return;
+    }
+    if (priority !== undefined && !isOneOf(priority, TASK_PRIORITIES)) {
+      res.status(400).json({ error: "Invalid task priority" });
+      return;
+    }
+    const parsedProgress = progress === undefined ? originalTask.progress : Number(progress);
+    if (!Number.isFinite(parsedProgress) || !Number.isInteger(parsedProgress) || parsedProgress < 0 || parsedProgress > 100) {
+      res.status(400).json({ error: "Progress must be an integer between 0 and 100" });
+      return;
+    }
+    const assignedToId = assigned_to_id === undefined ? null : parsePositiveId(assigned_to_id);
+    const assignedDeptId = assigned_dept_id === undefined ? null : parsePositiveId(assigned_dept_id);
+    if (assigned_to_id !== undefined && !assignedToId || assigned_dept_id !== undefined && !assignedDeptId) {
+      res.status(400).json({ error: "Assignment IDs must be valid positive integers" });
+      return;
+    }
+
     // If uploading a proof file
     let proofUrl = originalTask.proof_url;
     if (req.file) {
@@ -545,7 +613,7 @@ router.put("/:id", authenticate, upload.single("proof"), async (req: AuthRequest
 
     // Auto update status if proof is uploaded
     let finalStatus = status || originalTask.status;
-    let finalProgress = progress !== undefined ? parseInt(progress) : originalTask.progress;
+    let finalProgress = parsedProgress;
 
     if (req.file) {
       finalStatus = "Under Review";
@@ -570,9 +638,9 @@ router.put("/:id", authenticate, upload.single("proof"), async (req: AuthRequest
       [
         finalStatus,
         finalProgress,
-        priority || null,
-        assigned_to_id || null,
-        assigned_dept_id || null,
+        priority === undefined ? null : priority,
+        assignedToId,
+        assignedDeptId,
         proofUrl,
         id
       ]

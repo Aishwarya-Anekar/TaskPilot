@@ -2,6 +2,7 @@ import { Router, Response } from "express";
 import crypto from "crypto";
 import pool from "../db.js";
 import { authenticate, AuthRequest } from "../middleware/auth.js";
+import { isNonEmptyString, parsePositiveId, parseTimestamp } from "../validation.js";
 
 const router = Router();
 router.use(authenticate);
@@ -30,6 +31,7 @@ router.get("/", async (req: AuthRequest, res: Response) => {
 
 router.get("/:id", async (req: AuthRequest, res: Response) => {
   try {
+    if (!parsePositiveId(req.params.id)) return res.status(400).json({ error: "Visitor ID must be a valid positive integer" });
     const result = await pool.query(`SELECT v.*, e.title AS event_title, h.name AS host_name FROM visitors v LEFT JOIN events e ON e.id=v.event_id LEFT JOIN users h ON h.id=v.host_id WHERE v.id=$1`, [req.params.id]);
     if (!result.rows.length) return res.status(404).json({ error: "Visitor not found" });
     const visitor = result.rows[0]; if (!isAdmin(req) && visitor.host_id !== req.userId) return res.status(403).json({ error: "Visitor access denied" });
@@ -42,19 +44,37 @@ router.post("/", async (req: AuthRequest, res: Response) => {
   try {
     if (!canManage(req)) return res.status(403).json({ error: "Visitor management access required" });
     const { name, contact, organization, purpose, event_id, host_id, expected_arrival } = req.body;
-    if (!name?.trim() || !contact?.trim() || !purpose?.trim() || !expected_arrival) return res.status(400).json({ error: "Name, contact, purpose, and expected arrival are required" });
-    const host = Number(host_id) || req.userId;
+    if (!isNonEmptyString(name) || !isNonEmptyString(contact) || !isNonEmptyString(purpose) || !expected_arrival) return res.status(400).json({ error: "Name, contact, purpose, and expected arrival are required" });
+    if (parseTimestamp(expected_arrival) === null) return res.status(400).json({ error: "Expected arrival must be a valid timestamp" });
+    if (contact.includes("@") && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact.trim())) return res.status(400).json({ error: "Contact email must be valid" });
+    if (!contact.includes("@") && !/^\+?[\d\s().-]{7,20}$/.test(contact.trim())) return res.status(400).json({ error: "Contact number must be valid" });
+    const host = host_id === undefined ? req.userId : parsePositiveId(host_id);
+    if (!host) return res.status(400).json({ error: "Host ID must be a valid positive integer" });
+    const hostResult = await pool.query("SELECT id FROM users WHERE id = $1", [host]);
+    if (!hostResult.rows.length) return res.status(404).json({ error: "Host user not found" });
+    const eventId = event_id == null || event_id === "" ? null : parsePositiveId(event_id);
+    if (event_id != null && event_id !== "" && !eventId) return res.status(400).json({ error: "Event ID must be a valid positive integer" });
+    if (eventId) {
+      const eventResult = await pool.query("SELECT id FROM events WHERE id = $1", [eventId]);
+      if (!eventResult.rows.length) return res.status(404).json({ error: "Event not found" });
+    }
     const passCode = `VP-${crypto.randomBytes(8).toString("hex").toUpperCase()}`;
-    const result = await pool.query(`INSERT INTO visitors (name,contact,organization,purpose,event_id,host_id,expected_arrival,pass_code,created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`, [name.trim(), contact.trim(), organization?.trim() || null, purpose.trim(), event_id || null, host, expected_arrival, passCode, req.userId]);
+    const result = await pool.query(`INSERT INTO visitors (name,contact,organization,purpose,event_id,host_id,expected_arrival,pass_code,created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`, [name.trim(), contact.trim(), typeof organization === "string" ? organization.trim() || null : null, purpose.trim(), eventId, host, expected_arrival, passCode, req.userId]);
     await pool.query("INSERT INTO visitor_activity (visitor_id,action,performed_by,details) VALUES ($1,'REGISTERED',$2,$3)", [result.rows[0].id, req.userId, "Visitor registered"]);
     res.status(201).json(result.rows[0]);
   } catch (error) { console.error("Register visitor error:", error); res.status(500).json({ error: "Server error" }); }
 });
 
 async function updateStatus(req: AuthRequest, res: Response, status: string) {
+  if (!parsePositiveId(req.params.id)) return res.status(400).json({ error: "Visitor ID must be a valid positive integer" });
   const result = await pool.query("SELECT id, host_id, status FROM visitors WHERE id=$1", [req.params.id]);
   if (!result.rows.length) return res.status(404).json({ error: "Visitor not found" });
   if (!isAdmin(req) && result.rows[0].host_id !== req.userId) return res.status(403).json({ error: "Visitor access denied" });
+  if (status === "Checked Out") {
+    const checkIn = await pool.query("SELECT check_in_at FROM visitors WHERE id = $1", [req.params.id]);
+    if (!checkIn.rows[0].check_in_at) return res.status(400).json({ error: "Visitor must be checked in before check-out" });
+    if (new Date() < new Date(checkIn.rows[0].check_in_at)) return res.status(400).json({ error: "Check-out time cannot be earlier than check-in time" });
+  }
   const timeColumn = status === "Checked In" ? "check_in_at" : "check_out_at";
   const updated = await pool.query(`UPDATE visitors SET status=$1, ${timeColumn}=NOW(), updated_at=NOW() WHERE id=$2 RETURNING *`, [status, req.params.id]);
   await pool.query("INSERT INTO visitor_activity (visitor_id,action,performed_by,details) VALUES ($1,$2,$3,$4)", [req.params.id, status === "Checked In" ? "CHECK_IN" : "CHECK_OUT", req.userId, `Visitor ${status.toLowerCase()}`]);
