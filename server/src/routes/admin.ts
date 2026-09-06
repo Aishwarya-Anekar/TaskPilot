@@ -40,19 +40,19 @@ router.get("/logs", async (req: AuthRequest, res: Response) => {
   }
 });
 
-// POST /api/admin/reseed - Reset & Seed the Database (Super Admin only)
+// POST /api/admin/reseed - Check schema and seed missing demo data (Super Admin only)
 router.post("/reseed", async (req: AuthRequest, res: Response) => {
   try {
     if (req.userRole !== "super_admin") {
       res.status(403).json({ error: "Super Admin access required" });
       return;
     }
-    console.log("Super Admin triggered database re-seed...");
+    console.log("Super Admin triggered a safe database schema and seed check...");
     await initDb();
-    res.json({ message: "Database reinitialized successfully" });
+    res.json({ message: "Database schema and seed data checked successfully" });
   } catch (err) {
-    console.error("Reseed database error:", err);
-    res.status(500).json({ error: "Server error during database reset" });
+    console.error("Database schema and seed check error:", err);
+    res.status(500).json({ error: "Server error during database schema check" });
   }
 });
 

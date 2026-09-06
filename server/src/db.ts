@@ -47,43 +47,11 @@ export async function initDb() {
 
   const client = await pool.connect();
   try {
-    console.log("Reinitializing database schema for TaskPilot...");
-
-    // Drop old tables first to ensure clean migration
-    await client.query(`
-      DROP TABLE IF EXISTS activity_logs CASCADE;
-      DROP TABLE IF EXISTS attendance CASCADE;
-      DROP TABLE IF EXISTS meeting_notes CASCADE;
-      DROP TABLE IF EXISTS event_feedback CASCADE;
-      DROP TABLE IF EXISTS announcements CASCADE;
-      DROP TABLE IF EXISTS task_comments CASCADE;
-      DROP TABLE IF EXISTS resource_bookings CASCADE;
-      DROP TABLE IF EXISTS resources CASCADE;
-      DROP TABLE IF EXISTS subtasks CASCADE;
-      DROP TABLE IF EXISTS tasks CASCADE;
-      DROP TABLE IF EXISTS events CASCADE;
-      DROP TABLE IF EXISTS work_logs CASCADE;
-      DROP TABLE IF EXISTS messages CASCADE;
-      DROP TABLE IF EXISTS contacts CASCADE;
-      DROP TABLE IF EXISTS issues CASCADE;
-      DROP TABLE IF EXISTS users CASCADE;
-      DROP TABLE IF EXISTS departments CASCADE;
-      DROP TABLE IF EXISTS notifications CASCADE;
-      DROP TABLE IF EXISTS email_deliveries CASCADE;
-      DROP TABLE IF EXISTS task_escalations CASCADE;
-      DROP TABLE IF EXISTS escalation_settings CASCADE;
-      DROP TABLE IF EXISTS event_template_subtasks CASCADE;
-      DROP TABLE IF EXISTS event_template_tasks CASCADE;
-      DROP TABLE IF EXISTS event_templates CASCADE;
-      DROP TABLE IF EXISTS password_reset_tokens CASCADE;
-      DROP TABLE IF EXISTS visitor_activity CASCADE;
-      DROP TABLE IF EXISTS visitors CASCADE;
-      DROP TABLE IF EXISTS email_verification_tokens CASCADE;
-    `);
+    console.log("Database connection established. Checking TaskPilot schema...");
 
     // Create Departments Table
     await client.query(`
-      CREATE TABLE departments (
+      CREATE TABLE IF NOT EXISTS departments (
         id SERIAL PRIMARY KEY,
         name VARCHAR(100) UNIQUE NOT NULL,
         description TEXT,
@@ -93,7 +61,7 @@ export async function initDb() {
 
     // Create Users Table
     await client.query(`
-      CREATE TABLE users (
+      CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
         name VARCHAR(100) NOT NULL,
         email VARCHAR(255) UNIQUE NOT NULL,
@@ -110,7 +78,7 @@ export async function initDb() {
     `);
 
     await client.query(`
-      CREATE TABLE email_verification_tokens (
+      CREATE TABLE IF NOT EXISTS email_verification_tokens (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         token_hash CHAR(64) NOT NULL UNIQUE,
@@ -118,12 +86,12 @@ export async function initDb() {
         used_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT NOW()
       );
-      CREATE INDEX email_verification_tokens_user_idx ON email_verification_tokens (user_id, created_at DESC);
-      CREATE INDEX email_verification_tokens_expiry_idx ON email_verification_tokens (expires_at) WHERE used_at IS NULL;
+      CREATE INDEX IF NOT EXISTS email_verification_tokens_user_idx ON email_verification_tokens (user_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS email_verification_tokens_expiry_idx ON email_verification_tokens (expires_at) WHERE used_at IS NULL;
     `);
 
     await client.query(`
-      CREATE TABLE event_templates (
+      CREATE TABLE IF NOT EXISTS event_templates (
         id SERIAL PRIMARY KEY,
         name VARCHAR(255) UNIQUE NOT NULL,
         description TEXT DEFAULT '',
@@ -134,7 +102,7 @@ export async function initDb() {
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       );
-      CREATE TABLE event_template_tasks (
+      CREATE TABLE IF NOT EXISTS event_template_tasks (
         id SERIAL PRIMARY KEY,
         template_id INTEGER NOT NULL REFERENCES event_templates(id) ON DELETE CASCADE,
         title VARCHAR(255) NOT NULL,
@@ -145,17 +113,17 @@ export async function initDb() {
         relative_due_hours INTEGER DEFAULT 24,
         sort_order INTEGER DEFAULT 0
       );
-      CREATE TABLE event_template_subtasks (
+      CREATE TABLE IF NOT EXISTS event_template_subtasks (
         id SERIAL PRIMARY KEY,
         template_task_id INTEGER NOT NULL REFERENCES event_template_tasks(id) ON DELETE CASCADE,
         title VARCHAR(255) NOT NULL,
         sort_order INTEGER DEFAULT 0
       );
-      CREATE INDEX event_template_tasks_template_idx ON event_template_tasks (template_id, sort_order);
+      CREATE INDEX IF NOT EXISTS event_template_tasks_template_idx ON event_template_tasks (template_id, sort_order);
     `);
 
     await client.query(`
-      CREATE TABLE password_reset_tokens (
+      CREATE TABLE IF NOT EXISTS password_reset_tokens (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         token_hash CHAR(64) NOT NULL UNIQUE,
@@ -163,13 +131,13 @@ export async function initDb() {
         used_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT NOW()
       );
-      CREATE INDEX password_reset_tokens_user_idx ON password_reset_tokens (user_id, created_at DESC);
-      CREATE INDEX password_reset_tokens_expiry_idx ON password_reset_tokens (expires_at) WHERE used_at IS NULL;
+      CREATE INDEX IF NOT EXISTS password_reset_tokens_user_idx ON password_reset_tokens (user_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS password_reset_tokens_expiry_idx ON password_reset_tokens (expires_at) WHERE used_at IS NULL;
     `);
 
     // In-app notifications are private to each recipient and deduplicated by key.
     await client.query(`
-      CREATE TABLE notifications (
+      CREATE TABLE IF NOT EXISTS notifications (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         type VARCHAR(50) NOT NULL,
@@ -182,14 +150,14 @@ export async function initDb() {
         created_at TIMESTAMP DEFAULT NOW(),
         UNIQUE (user_id, dedupe_key)
       );
-      CREATE INDEX notifications_user_unread_idx
+      CREATE INDEX IF NOT EXISTS notifications_user_unread_idx
         ON notifications (user_id, created_at DESC) WHERE read_at IS NULL;
-      CREATE INDEX notifications_user_created_idx
+      CREATE INDEX IF NOT EXISTS notifications_user_created_idx
         ON notifications (user_id, created_at DESC);
     `);
 
     await client.query(`
-      CREATE TABLE email_deliveries (
+      CREATE TABLE IF NOT EXISTS email_deliveries (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         dedupe_key VARCHAR(255) NOT NULL,
@@ -198,13 +166,13 @@ export async function initDb() {
         failed_at TIMESTAMP,
         UNIQUE (user_id, dedupe_key)
       );
-      CREATE INDEX email_deliveries_pending_idx
+      CREATE INDEX IF NOT EXISTS email_deliveries_pending_idx
         ON email_deliveries (last_attempt_at) WHERE sent_at IS NULL;
     `);
 
     // Create Events Table
     await client.query(`
-      CREATE TABLE events (
+      CREATE TABLE IF NOT EXISTS events (
         id SERIAL PRIMARY KEY,
         title VARCHAR(255) NOT NULL,
         description TEXT,
@@ -224,7 +192,7 @@ export async function initDb() {
     `);
 
     await client.query(`
-      CREATE TABLE visitors (
+      CREATE TABLE IF NOT EXISTS visitors (
         id SERIAL PRIMARY KEY,
         name VARCHAR(150) NOT NULL,
         contact VARCHAR(150) NOT NULL,
@@ -241,11 +209,11 @@ export async function initDb() {
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       );
-      CREATE INDEX visitors_arrival_idx ON visitors (expected_arrival);
-      CREATE INDEX visitors_status_idx ON visitors (status);
-      CREATE INDEX visitors_event_idx ON visitors (event_id);
-      CREATE INDEX visitors_host_idx ON visitors (host_id);
-      CREATE TABLE visitor_activity (
+      CREATE INDEX IF NOT EXISTS visitors_arrival_idx ON visitors (expected_arrival);
+      CREATE INDEX IF NOT EXISTS visitors_status_idx ON visitors (status);
+      CREATE INDEX IF NOT EXISTS visitors_event_idx ON visitors (event_id);
+      CREATE INDEX IF NOT EXISTS visitors_host_idx ON visitors (host_id);
+      CREATE TABLE IF NOT EXISTS visitor_activity (
         id SERIAL PRIMARY KEY,
         visitor_id INTEGER NOT NULL REFERENCES visitors(id) ON DELETE CASCADE,
         action VARCHAR(30) NOT NULL,
@@ -253,12 +221,12 @@ export async function initDb() {
         details TEXT,
         created_at TIMESTAMP DEFAULT NOW()
       );
-      CREATE INDEX visitor_activity_visitor_idx ON visitor_activity (visitor_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS visitor_activity_visitor_idx ON visitor_activity (visitor_id, created_at DESC);
     `);
 
     // Create Tasks Table
     await client.query(`
-      CREATE TABLE tasks (
+      CREATE TABLE IF NOT EXISTS tasks (
         id SERIAL PRIMARY KEY,
         event_id INTEGER REFERENCES events(id) ON DELETE CASCADE,
         title VARCHAR(255) NOT NULL,
@@ -279,15 +247,15 @@ export async function initDb() {
     `);
 
     await client.query(`
-      CREATE TABLE escalation_settings (
+      CREATE TABLE IF NOT EXISTS escalation_settings (
         id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
         stage_2_hours INTEGER NOT NULL DEFAULT 24 CHECK (stage_2_hours > 0),
         stage_3_hours INTEGER NOT NULL DEFAULT 48 CHECK (stage_3_hours > 0),
         updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
         updated_at TIMESTAMP DEFAULT NOW()
       );
-      INSERT INTO escalation_settings (id) VALUES (1);
-      CREATE TABLE task_escalations (
+      INSERT INTO escalation_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+      CREATE TABLE IF NOT EXISTS task_escalations (
         id SERIAL PRIMARY KEY,
         task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
         stage INTEGER NOT NULL CHECK (stage BETWEEN 1 AND 3),
@@ -295,12 +263,12 @@ export async function initDb() {
         created_at TIMESTAMP DEFAULT NOW(),
         UNIQUE (task_id, stage)
       );
-      CREATE INDEX task_escalations_task_idx ON task_escalations (task_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS task_escalations_task_idx ON task_escalations (task_id, created_at DESC);
     `);
 
     // Create Subtasks Table
     await client.query(`
-      CREATE TABLE subtasks (
+      CREATE TABLE IF NOT EXISTS subtasks (
         id SERIAL PRIMARY KEY,
         task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
         title VARCHAR(255) NOT NULL,
@@ -312,7 +280,7 @@ export async function initDb() {
 
     // Create Resources Table
     await client.query(`
-      CREATE TABLE resources (
+      CREATE TABLE IF NOT EXISTS resources (
         id SERIAL PRIMARY KEY,
         name VARCHAR(100) NOT NULL,
         type VARCHAR(50) NOT NULL, -- 'Room', 'Equipment', 'Service'
@@ -322,7 +290,7 @@ export async function initDb() {
 
     // Create Resource Bookings Table
     await client.query(`
-      CREATE TABLE resource_bookings (
+      CREATE TABLE IF NOT EXISTS resource_bookings (
         id SERIAL PRIMARY KEY,
         resource_id INTEGER REFERENCES resources(id) ON DELETE CASCADE,
         event_id INTEGER REFERENCES events(id) ON DELETE CASCADE,
@@ -336,7 +304,7 @@ export async function initDb() {
 
     // Create Task Comments (Collaboration Forum) Table
     await client.query(`
-      CREATE TABLE task_comments (
+      CREATE TABLE IF NOT EXISTS task_comments (
         id SERIAL PRIMARY KEY,
         task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -347,7 +315,7 @@ export async function initDb() {
 
     // Create Announcements Table (Announcement Board)
     await client.query(`
-      CREATE TABLE announcements (
+      CREATE TABLE IF NOT EXISTS announcements (
         id SERIAL PRIMARY KEY,
         title VARCHAR(255) NOT NULL,
         content TEXT NOT NULL,
@@ -359,7 +327,7 @@ export async function initDb() {
 
     // Create Event Feedback Table
     await client.query(`
-      CREATE TABLE event_feedback (
+      CREATE TABLE IF NOT EXISTS event_feedback (
         id SERIAL PRIMARY KEY,
         event_id INTEGER REFERENCES events(id) ON DELETE CASCADE,
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -371,7 +339,7 @@ export async function initDb() {
 
     // Create Meeting Notes Table
     await client.query(`
-      CREATE TABLE meeting_notes (
+      CREATE TABLE IF NOT EXISTS meeting_notes (
         id SERIAL PRIMARY KEY,
         event_id INTEGER REFERENCES events(id) ON DELETE CASCADE,
         title VARCHAR(255) NOT NULL,
@@ -383,7 +351,7 @@ export async function initDb() {
 
     // Create Attendance Table (QR attendance)
     await client.query(`
-      CREATE TABLE attendance (
+      CREATE TABLE IF NOT EXISTS attendance (
         id SERIAL PRIMARY KEY,
         event_id INTEGER REFERENCES events(id) ON DELETE CASCADE,
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -393,7 +361,7 @@ export async function initDb() {
 
     // Create Activity Logs Table
     await client.query(`
-      CREATE TABLE activity_logs (
+      CREATE TABLE IF NOT EXISTS activity_logs (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
         action VARCHAR(255) NOT NULL,
@@ -404,7 +372,7 @@ export async function initDb() {
 
     // Create Messages Table
     await client.query(`
-      CREATE TABLE messages (
+      CREATE TABLE IF NOT EXISTS messages (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
         contact_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -415,26 +383,30 @@ export async function initDb() {
     `);
 
     await client.query(`
-      CREATE INDEX users_name_search_idx ON users (LOWER(name));
-      CREATE INDEX users_email_search_idx ON users (LOWER(email));
-      CREATE INDEX departments_name_search_idx ON departments (LOWER(name));
-      CREATE INDEX tasks_title_search_idx ON tasks (LOWER(title));
-      CREATE INDEX events_title_search_idx ON events (LOWER(title));
-      CREATE INDEX tasks_assigned_to_idx ON tasks (assigned_to_id);
-      CREATE INDEX tasks_assigned_dept_idx ON tasks (assigned_dept_id);
+      CREATE INDEX IF NOT EXISTS users_name_search_idx ON users (LOWER(name));
+      CREATE INDEX IF NOT EXISTS users_email_search_idx ON users (LOWER(email));
+      CREATE INDEX IF NOT EXISTS departments_name_search_idx ON departments (LOWER(name));
+      CREATE INDEX IF NOT EXISTS tasks_title_search_idx ON tasks (LOWER(title));
+      CREATE INDEX IF NOT EXISTS events_title_search_idx ON events (LOWER(title));
+      CREATE INDEX IF NOT EXISTS tasks_assigned_to_idx ON tasks (assigned_to_id);
+      CREATE INDEX IF NOT EXISTS tasks_assigned_dept_idx ON tasks (assigned_dept_id);
     `);
 
-    console.log("✅ Database tables created successfully");
+    console.log("Database schema checked successfully. Missing tables and indexes were created; existing data preserved.");
 
-    // Seed default departments
-    await client.query(`
-      INSERT INTO departments (name, description) VALUES
-        ('IT Support', 'Coordinates tech hardware, networks, servers, and general computer issues.'),
-        ('Operations', 'Manages facilities maintenance, cleaning, setup, and logistics.'),
-        ('Human Resources', 'Handles staffing, payroll, employee relationships, and registrations.'),
-        ('Events Team', 'Responsible for planning, coordination, and executing public and corporate events.')
-    `);
-    console.log("✅ Seeded default departments");
+    // Seed defaults only when their stable identifiers do not already exist.
+    const defaultDepartments = [
+      ["IT Support", "Coordinates tech hardware, networks, servers, and general computer issues."],
+      ["Operations", "Manages facilities maintenance, cleaning, setup, and logistics."],
+      ["Human Resources", "Handles staffing, payroll, employee relationships, and registrations."],
+      ["Events Team", "Responsible for planning, coordination, and executing public and corporate events."],
+    ];
+    for (const [name, description] of defaultDepartments) {
+      await client.query(
+        "INSERT INTO departments (name, description) VALUES ($1, $2) ON CONFLICT (name) DO NOTHING",
+        [name, description]
+      );
+    }
 
     const deptResult = await client.query("SELECT id, name FROM departments");
     const depts: Record<string, number> = {};
@@ -445,72 +417,65 @@ export async function initDb() {
     // Seed users
     const hash = await bcrypt.hash("admin123", 10);
 
-    // 1. Super Admin
-    const superAdmin = await client.query(`
-      INSERT INTO users (name, email, password_hash, role)
-      VALUES ('Super Admin', 'superadmin@taskpilot.com', $1, 'super_admin')
-      RETURNING id
-    `, [hash]);
+    const ensureUser = async (name: string, email: string, role: string, departmentId?: number) => {
+      await client.query(
+        `INSERT INTO users (name, email, password_hash, role, department_id)
+         VALUES ($1, $2, $3, $4, $5) ON CONFLICT (email) DO NOTHING`,
+        [name, email, hash, role, departmentId || null]
+      );
+      const result = await client.query("SELECT id FROM users WHERE email = $1", [email]);
+      return result.rows[0].id as number;
+    };
 
-    // 2. Admin
-    const adminUser = await client.query(`
-      INSERT INTO users (name, email, password_hash, role, department_id)
-      VALUES ('Admin User', 'admin@taskpilot.com', $1, 'admin', $2)
-      RETURNING id
-    `, [hash, depts["Operations"]]);
-
-    // 3. Dept Head
-    const deptHead = await client.query(`
-      INSERT INTO users (name, email, password_hash, role, department_id)
-      VALUES ('Dept Head (IT)', 'depthead@taskpilot.com', $1, 'dept_head', $2)
-      RETURNING id
-    `, [hash, depts["IT Support"]]);
-
-    // 4. Employee
-    const employee = await client.query(`
-      INSERT INTO users (name, email, password_hash, role, department_id)
-      VALUES ('Employee (IT)', 'employee@taskpilot.com', $1, 'employee', $2)
-      RETURNING id
-    `, [hash, depts["IT Support"]]);
-
-    console.log("✅ Seeded user roles successfully");
+    const superAdminId = await ensureUser("Super Admin", "superadmin@taskpilot.com", "super_admin");
+    const adminId = await ensureUser("Admin User", "admin@taskpilot.com", "admin", depts["Operations"]);
+    await ensureUser("Dept Head (IT)", "depthead@taskpilot.com", "dept_head", depts["IT Support"]);
+    const employeeId = await ensureUser("Employee (IT)", "employee@taskpilot.com", "employee", depts["IT Support"]);
 
     // Seed resources
-    await client.query(`
-      INSERT INTO resources (name, type, status) VALUES
-        ('Conference Room A', 'Room', 'Available'),
-        ('Main Auditorium', 'Room', 'Available'),
-        ('High-Def Projector', 'Equipment', 'Available'),
-        ('PA Audio System', 'Equipment', 'Available')
-    `);
-    console.log("✅ Seeded resources");
+    const defaultResources = [
+      ["Conference Room A", "Room"],
+      ["Main Auditorium", "Room"],
+      ["High-Def Projector", "Equipment"],
+      ["PA Audio System", "Equipment"],
+    ];
+    for (const [name, type] of defaultResources) {
+      const existing = await client.query("SELECT id FROM resources WHERE name = $1 LIMIT 1", [name]);
+      if (!existing.rows.length) {
+        await client.query("INSERT INTO resources (name, type, status) VALUES ($1, $2, 'Available')", [name, type]);
+      }
+    }
 
     // Seed an initial event
-    const event = await client.query(`
-      INSERT INTO events (title, description, location, start_date, end_date, coordinator_id, status, qr_code_key)
-      VALUES ('Annual Tech Summit 2026', 'A large tech summit with workshops and seminars.', 'Main Auditorium', NOW() + INTERVAL '2 days', NOW() + INTERVAL '3 days', $1, 'Active', 'tech_summit_2026_qr')
-      RETURNING id
-    `, [adminUser.rows[0].id]);
-    const eventId = event.rows[0].id;
+    const existingEvent = await client.query("SELECT id FROM events WHERE qr_code_key = $1 LIMIT 1", ["tech_summit_2026_qr"]);
+    if (existingEvent.rows.length) {
+      console.log("Seed data checked successfully; existing demo data was preserved.");
+    } else {
+      const event = await client.query(`
+        INSERT INTO events (title, description, location, start_date, end_date, coordinator_id, status, qr_code_key)
+        VALUES ('Annual Tech Summit 2026', 'A large tech summit with workshops and seminars.', 'Main Auditorium', NOW() + INTERVAL '2 days', NOW() + INTERVAL '3 days', $1, 'Active', 'tech_summit_2026_qr')
+        RETURNING id
+      `, [adminId]);
+      const eventId = event.rows[0].id;
 
     // Seed resource booking
     await client.query(`
       INSERT INTO resource_bookings (resource_id, event_id, booked_by, start_time, end_time)
       VALUES ((SELECT id FROM resources WHERE name='Main Auditorium'), $1, $2, NOW() + INTERVAL '2 days', NOW() + INTERVAL '3 days')
-    `, [eventId, adminUser.rows[0].id]);
+      `, [eventId, adminId]);
 
     // Seed tasks for this event
     const task1 = await client.query(`
       INSERT INTO tasks (event_id, title, description, assigned_to_id, assigned_dept_id, priority, status, progress, due_date)
       VALUES ($1, 'Set up Tech Network', 'Configure routers and switches for high-speed Wi-Fi access for guests.', $2, $3, 'High', 'In Progress', 40, NOW() + INTERVAL '1 day')
       RETURNING id
-    `, [eventId, employee.rows[0].id, depts["IT Support"]]);
+      `, [eventId, employeeId, depts["IT Support"]]);
 
     const task2 = await client.query(`
       INSERT INTO tasks (event_id, title, description, assigned_dept_id, priority, status, progress, due_date)
       VALUES ($1, 'Auditorium Seating Arrangement', 'Set up chairs and presentation standee.', $2, 'Medium', 'Pending', 0, NOW() + INTERVAL '2 days')
       RETURNING id
-    `, [eventId, depts["Operations"]]);
+      `, [eventId, depts["Operations"]]);
 
     // Seed subtasks
     await client.query(`
@@ -518,30 +483,32 @@ export async function initDb() {
         ($1, 'Install Routers', $2, true),
         ($1, 'Configure SSIDs', $2, false),
         ($1, 'Test Bandwidth Limit', $2, false)
-    `, [task1.rows[0].id, employee.rows[0].id]);
+      `, [task1.rows[0].id, employeeId]);
 
     // Seed task comment
     await client.query(`
       INSERT INTO task_comments (task_id, user_id, text) VALUES
         ($1, $2, 'Installed the router in the main hallway. Getting good signals.')
-    `, [task1.rows[0].id, employee.rows[0].id]);
+      `, [task1.rows[0].id, employeeId]);
 
     // Seed announcements
     await client.query(`
       INSERT INTO announcements (title, content, created_by) VALUES
         ('Welcome to TaskPilot Operations', 'TaskPilot has launched today. All organizational workflows are now orchestrated digitally. Please complete your tasks accordingly.', $1)
-    `, [adminUser.rows[0].id]);
+      `, [adminId]);
 
     // Seed system log
     await client.query(`
       INSERT INTO activity_logs (user_id, action, details) VALUES
         ($1, 'Initialize Organization', 'TaskPilot organization details were initialized with pre-seeded demo files.')
-    `, [superAdmin.rows[0].id]);
+      `, [superAdminId]);
 
-    console.log("✅ Database seeded with default events/tasks/resources!");
+      console.log("Default demo event, task, and related data created.");
+    }
+    console.log("Seed data checked successfully. Existing database data preserved.");
 
   } catch (err) {
-    console.error("Failed to reinitialize database:", err);
+    console.error("Failed to initialize database:", err);
     throw err;
   } finally {
     client.release();
