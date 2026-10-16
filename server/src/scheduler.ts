@@ -7,12 +7,12 @@ async function processDeadlineNotifications() {
   const result = await pool.query(
     `SELECT id, title, due_date, status, assigned_dept_id, overdue_at
      FROM tasks
-     WHERE due_date IS NOT NULL AND status NOT IN ('Completed', 'Rejected')`
+     WHERE deleted_at IS NULL AND due_date IS NOT NULL AND status NOT IN ('Completed', 'Rejected')`
   );
 
   for (const task of result.rows) {
     if (new Date(task.due_date).getTime() < Date.now() && !task.overdue_at) {
-      await pool.query("UPDATE tasks SET is_overdue = true, overdue_at = due_date WHERE id = $1 AND overdue_at IS NULL", [task.id]);
+      await pool.query("UPDATE tasks SET is_overdue = true, overdue_at = due_date WHERE id = $1 AND deleted_at IS NULL AND overdue_at IS NULL", [task.id]);
       task.overdue_at = task.due_date;
     }
 
@@ -44,7 +44,7 @@ async function processDeadlineNotifications() {
     const overdueHours = (Date.now() - new Date(task.overdue_at).getTime()) / 3600000;
     const stages = [{ stage: 1, role: "assigned" }];
     if (overdueHours >= settings.stage_2_hours) stages.push({ stage: 2, role: "dept_head" });
-    if (overdueHours >= settings.stage_3_hours) stages.push({ stage: 3, role: "admin" });
+    if (overdueHours >= settings.stage_3_hours) stages.push({ stage: 3, role: "super_admin" });
 
     for (const escalation of stages) {
       const claimed = await pool.query(
@@ -59,7 +59,7 @@ async function processDeadlineNotifications() {
         : (await pool.query(
           escalation.stage === 2
             ? "SELECT id FROM users WHERE role = 'dept_head' AND department_id = $1"
-            : "SELECT id FROM users WHERE role IN ('admin', 'super_admin')",
+            : "SELECT id FROM users WHERE role = 'super_admin'",
           escalation.stage === 2 ? [task.assigned_dept_id] : []
         )).rows.map((row) => row.id as number);
       const title = `Task escalation - Stage ${escalation.stage}`;
@@ -78,6 +78,36 @@ async function processDeadlineNotifications() {
         [title, `Task "${task.title}" crossed escalation stage ${escalation.stage}.`]
       );
     }
+  }
+}
+
+async function processEventReminders() {
+  const events = await pool.query(
+    `SELECT id, title, start_date, department_id, coordinator_id
+     FROM events
+     WHERE deleted_at IS NULL AND start_date IS NOT NULL
+       AND start_date::date IN (CURRENT_DATE, CURRENT_DATE + 1)
+       AND status NOT IN ('Cancelled', 'Completed')`
+  );
+
+  for (const event of events.rows) {
+    const daysUntil = await isDueOn(event.start_date, 1) ? 1 : 0;
+    const recipients = await pool.query(
+      `SELECT id FROM users WHERE is_active = true
+       AND (($1::integer IS NOT NULL AND id = $1)
+         OR ($2::integer IS NOT NULL AND department_id = $2))`,
+      [event.coordinator_id, event.department_id]
+    );
+    const when = daysUntil === 1 ? "tomorrow" : "today";
+    await createNotifications(recipients.rows.map((recipient) => ({
+      userId: recipient.id as number,
+      type: "event_reminder",
+      title: `Event reminder: ${event.title}`,
+      message: `"${event.title}" starts ${when}.`,
+      entityType: "event",
+      entityId: event.id as number,
+      dedupeKey: `event:${event.id}:reminder:${new Date(event.start_date).toISOString().slice(0, 10)}`,
+    })));
   }
 }
 
@@ -102,6 +132,51 @@ async function processRecurringEvents() {
   }
 }
 
+async function processAnnouncements() {
+  const result = await pool.query(
+    `UPDATE announcements
+     SET status = CASE WHEN expires_at IS NOT NULL AND expires_at <= NOW() THEN 'archived' ELSE 'published' END,
+         archived_at = CASE WHEN expires_at IS NOT NULL AND expires_at <= NOW() THEN NOW() ELSE archived_at END,
+         updated_at = NOW()
+     WHERE (status = 'scheduled' AND published_at <= NOW())
+        OR (status = 'published' AND expires_at IS NOT NULL AND expires_at <= NOW())
+     RETURNING id, title, priority, audience, target_dept_id, published_at, status`
+  );
+
+  for (const announcement of result.rows) {
+    if (announcement.status !== "published") continue;
+    const recipientResult = announcement.audience === "selected_users"
+      ? await pool.query(
+        `SELECT u.id FROM announcement_recipients ar JOIN users u ON u.id = ar.user_id
+         WHERE ar.announcement_id = $1 AND u.is_active = true
+           AND u.id <> (SELECT created_by FROM announcements WHERE id = $1)`,
+        [announcement.id]
+      )
+      : await pool.query(
+        `SELECT id FROM users WHERE is_active = true
+         AND id <> (SELECT created_by FROM announcements WHERE id = $1)
+         AND (
+           $2 = 'college'
+           OR ($2 = 'super_admin' AND role = 'super_admin')
+           OR ($2 = 'dept_head' AND role = 'dept_head')
+           OR ($2 = 'employee' AND role = 'employee')
+           OR ($2 = 'department' AND department_id = $3)
+         )`,
+        [announcement.id, announcement.audience, announcement.target_dept_id]
+      );
+
+    await createNotifications(recipientResult.rows.map((recipient) => ({
+      userId: recipient.id as number,
+      type: announcement.priority === "Urgent" ? "urgent_announcement" : "new_announcement",
+      title: announcement.priority === "Urgent" ? "Urgent college notice" : "New college announcement",
+      message: announcement.title,
+      entityType: "announcement",
+      entityId: announcement.id as number,
+      dedupeKey: `announcement:${announcement.id}:published:${new Date(announcement.published_at).getTime()}`,
+    })));
+  }
+}
+
 async function isDueOn(value: string | Date, daysFromToday: number) {
   const result = await pool.query(
     `SELECT ($1::timestamp::date = CURRENT_DATE + $2::integer) AS matches`,
@@ -111,7 +186,7 @@ async function isDueOn(value: string | Date, daysFromToday: number) {
 }
 
 export function startNotificationScheduler() {
-  const run = () => Promise.all([processDeadlineNotifications(), processRecurringEvents()]).catch((err) => {
+  const run = () => Promise.all([processDeadlineNotifications(), processEventReminders(), processRecurringEvents(), processAnnouncements()]).catch((err) => {
     console.error("Deadline notification job failed:", err);
   });
   run();

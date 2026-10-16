@@ -29,6 +29,8 @@ interface EventTemplate {
   id: number;
   name: string;
   description: string;
+  event_category?: string;
+  default_location?: string;
   default_duration_minutes: number;
   tasks: { title: string }[];
 }
@@ -36,7 +38,7 @@ interface EventTemplate {
 export default function ReportPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const isAdmin = user?.role === "admin" || user?.role === "super_admin";
+  const isAdmin = user?.role === "super_admin";
   const isDeptHead = user?.role === "dept_head";
   const isEmployee = user?.role === "employee";
 
@@ -46,6 +48,8 @@ export default function ReportPage() {
 
   // Event Form State
   const [eventTitle, setEventTitle] = useState("");
+  const [eventCategory, setEventCategory] = useState("Department Meeting");
+  const [eventDepartmentId, setEventDepartmentId] = useState("");
   const [eventDesc, setEventDesc] = useState("");
   const [eventLocation, setEventLocation] = useState("");
   const [eventStart, setEventStart] = useState("");
@@ -54,9 +58,12 @@ export default function ReportPage() {
   const [recurrenceType, setRecurrenceType] = useState("");
   const [recurrenceInterval, setRecurrenceInterval] = useState("1");
   const [recurrenceUntil, setRecurrenceUntil] = useState("");
+  const [eventApprovalRequired, setEventApprovalRequired] = useState(false);
+  const [eventStatus, setEventStatus] = useState("Draft");
 
   // Task Form State
   const [taskTitle, setTaskTitle] = useState("");
+  const [taskCategory, setTaskCategory] = useState("Administrative Work");
   const [taskDesc, setTaskDesc] = useState("");
   const [selectedEventId, setSelectedEventId] = useState<string>("");
   const [taskPriority, setTaskPriority] = useState("Medium");
@@ -64,6 +71,7 @@ export default function ReportPage() {
   const [assignedDeptId, setAssignedDeptId] = useState<string>("");
   const [assignedUserId, setAssignedUserId] = useState<string>("");
   const [taskDueDate, setTaskDueDate] = useState("");
+  const [verificationRequired, setVerificationRequired] = useState(false);
 
   // Fetch options
   const { data: events = [] } = useQuery<EventItem[]>({
@@ -97,9 +105,27 @@ export default function ReportPage() {
       toast.error("Please provide an event title");
       return;
     }
+    if (!eventStart || !eventEnd) {
+      toast.error("Please provide both start and end times for the event");
+      return;
+    }
     setSubmitting(true);
     try {
-      const payload = { title: eventTitle, description: eventDesc, location: eventLocation, start_date: eventStart || undefined, end_date: eventEnd || undefined, recurrence_type: recurrenceType || undefined, recurrence_interval: recurrenceType ? Number(recurrenceInterval) : undefined, recurrence_until: recurrenceUntil || undefined };
+      const payload = {
+        title: eventTitle,
+        category: eventCategory,
+        department_id: eventDepartmentId ? Number(eventDepartmentId) : undefined,
+        description: eventDesc,
+        location: eventLocation,
+        start_date: eventStart || undefined,
+        end_date: eventEnd || undefined,
+        status: eventStatus,
+        approval_required: eventApprovalRequired,
+        approval_status: eventApprovalRequired ? "Pending Approval" : "Not Required",
+        recurrence_type: recurrenceType || undefined,
+        recurrence_interval: recurrenceType ? Number(recurrenceInterval) : undefined,
+        recurrence_until: recurrenceUntil || undefined,
+      };
       if (selectedTemplateId) await apiPost(`/templates/${selectedTemplateId}/generate`, payload);
       else await apiPost("/tasks/events", payload);
       toast.success("Event created successfully");
@@ -123,11 +149,13 @@ export default function ReportPage() {
       await apiPost("/tasks", {
         event_id: parseInt(selectedEventId),
         title: taskTitle,
+        category: taskCategory,
         description: taskDesc,
         assigned_to_id: assignType === "user" && assignedUserId ? parseInt(assignedUserId) : undefined,
         assigned_dept_id: assignType === "dept" && assignedDeptId ? parseInt(assignedDeptId) : undefined,
         priority: taskPriority,
         due_date: taskDueDate || undefined,
+        verification_required: verificationRequired,
       });
       toast.success("Task created and assigned successfully");
       navigate("/report/success");
@@ -208,9 +236,36 @@ export default function ReportPage() {
                   />
                 </div>
 
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Event Category</label>
+                    <select value={eventCategory} onChange={(e) => setEventCategory(e.target.value)} className="w-full px-4 py-2.5 rounded-lg input-focus text-sm text-foreground focus:outline-none">
+                      {[
+                        "Department Meeting",
+                        "Internal Examination",
+                        "University Examination",
+                        "College Festival or Technical Event",
+                        "Faculty Training",
+                        "Laboratory Inspection",
+                        "Accreditation Documentation",
+                        "Academic Activity",
+                        "Administrative Work",
+                        "Other",
+                      ].map((option) => <option key={option} value={option}>{option}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Department</label>
+                    <select value={eventDepartmentId} onChange={(e) => setEventDepartmentId(e.target.value)} className="w-full px-4 py-2.5 rounded-lg input-focus text-sm text-foreground focus:outline-none">
+                      <option value="">College-wide</option>
+                      {departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Event Template</label>
-                  <select value={selectedTemplateId} onChange={(e) => { const value = e.target.value; setSelectedTemplateId(value); const template = templates.find((item) => String(item.id) === value); if (template) { setEventTitle(template.name); setEventDesc(template.description); } }} className="w-full px-4 py-2.5 rounded-lg input-focus text-sm text-foreground focus:outline-none">
+                  <select value={selectedTemplateId} onChange={(e) => { const value = e.target.value; setSelectedTemplateId(value); const template = templates.find((item) => String(item.id) === value); if (template) { setEventTitle(template.name); setEventCategory(template.event_category || "Department Meeting"); setEventDesc(template.description || ""); setEventLocation(template.default_location || ""); } }} className="w-full px-4 py-2.5 rounded-lg input-focus text-sm text-foreground focus:outline-none">
                     <option value="">Start from scratch</option>
                     {templates.map((template) => <option key={template.id} value={template.id}>{template.name} ({template.tasks.length} tasks)</option>)}
                   </select>
@@ -257,6 +312,24 @@ export default function ReportPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div><label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Recurrence</label><select value={recurrenceType} onChange={(e) => setRecurrenceType(e.target.value)} className="w-full px-3 py-2.5 rounded-lg input-focus text-sm text-foreground"><option value="">One-time</option><option value="yearly">Yearly</option><option value="monthly">Monthly</option><option value="custom">Custom interval</option></select></div>
                   {recurrenceType && <><div><label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Every</label><input type="number" min="1" value={recurrenceInterval} onChange={(e) => setRecurrenceInterval(e.target.value)} className="w-full px-3 py-2.5 rounded-lg input-focus text-sm text-foreground" /></div><div><label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Repeat Until</label><input type="date" value={recurrenceUntil} onChange={(e) => setRecurrenceUntil(e.target.value)} className="w-full px-3 py-2.5 rounded-lg input-focus text-sm text-foreground" /></div></>}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Event Status</label>
+                    <select value={eventStatus} onChange={(e) => setEventStatus(e.target.value)} className="w-full px-4 py-2.5 rounded-lg input-focus text-sm text-foreground focus:outline-none">
+                      <option>Draft</option>
+                      <option>Active</option>
+                      <option>Completed</option>
+                      <option>Cancelled</option>
+                    </select>
+                  </div>
+                  <div className="flex items-end">
+                    <label className="flex w-full items-center justify-between rounded-lg border border-border px-3 py-3 text-sm text-foreground">
+                      <span>Requires approval</span>
+                      <input type="checkbox" checked={eventApprovalRequired} onChange={(e) => setEventApprovalRequired(e.target.checked)} className="h-4 w-4 accent-blue-600" />
+                    </label>
+                  </div>
                 </div>
 
                 {/* Event Description */}
@@ -328,6 +401,31 @@ export default function ReportPage() {
                     required
                     className="w-full px-4 py-2.5 rounded-lg input-focus text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
                   />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Task Category</label>
+                    <select value={taskCategory} onChange={(e) => setTaskCategory(e.target.value)} className="w-full px-4 py-2.5 rounded-lg input-focus text-sm text-foreground focus:outline-none">
+                      {[
+                        "Academic Work",
+                        "Examination",
+                        "Documentation",
+                        "Meeting Preparation",
+                        "Event Preparation",
+                        "Laboratory Maintenance",
+                        "Administrative Work",
+                        "Student Activity",
+                        "Other",
+                      ].map((option) => <option key={option} value={option}>{option}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex items-end">
+                    <label className="flex w-full items-center justify-between rounded-lg border border-border px-3 py-3 text-sm text-foreground">
+                      <span>Verification required</span>
+                      <input type="checkbox" checked={verificationRequired} onChange={(e) => setVerificationRequired(e.target.checked)} className="h-4 w-4 accent-blue-600" />
+                    </label>
+                  </div>
                 </div>
 
                 {/* Assignment Type */}

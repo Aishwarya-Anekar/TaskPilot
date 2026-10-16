@@ -3,7 +3,7 @@ import pool from "../db.js";
 import { authenticate, AuthRequest } from "../middleware/auth.js";
 
 const router = Router();
-const privilegedRoles = ["admin", "super_admin"];
+const privilegedRoles = ["super_admin", "dept_head"];
 
 router.get("/", authenticate, async (req: AuthRequest, res: Response) => {
   const query = typeof req.query.q === "string" ? req.query.q.trim() : "";
@@ -55,7 +55,8 @@ router.get("/", authenticate, async (req: AuthRequest, res: Response) => {
          FROM tasks t
          LEFT JOIN events e ON t.event_id = e.id
          LEFT JOIN departments d ON t.assigned_dept_id = d.id
-         WHERE (t.title ILIKE $1 OR t.description ILIKE $1 OR e.title ILIKE $1 OR d.name ILIKE $1)
+         WHERE t.deleted_at IS NULL
+           AND (t.title ILIKE $1 OR t.description ILIKE $1 OR e.title ILIKE $1 OR d.name ILIKE $1)
          ${taskScope}
          ORDER BY t.updated_at DESC, t.created_at DESC LIMIT 8`,
         taskParams

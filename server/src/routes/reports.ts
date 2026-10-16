@@ -14,10 +14,13 @@ router.get("/data", async (req: AuthRequest, res: Response) => {
     const where: string[] = [];
     const add = (value: unknown) => { params.push(value); return `$${params.length}`; };
     if (type === "resources") {
-      const result = await pool.query(`SELECT rb.id, r.name AS resource, r.type, e.title AS event, u.name AS booked_by, rb.status, rb.start_time, rb.end_time, rb.created_at FROM resource_bookings rb JOIN resources r ON r.id=rb.resource_id JOIN events e ON e.id=rb.event_id LEFT JOIN users u ON u.id=rb.booked_by ORDER BY rb.created_at DESC`);
+      const scope = isEmployee || isHead ? "WHERE rb.booked_by = $1" : "";
+      const params = isEmployee || isHead ? [req.userId] : [];
+      const result = await pool.query(`SELECT rb.id, r.name AS resource, r.type, e.title AS event, u.name AS booked_by, rb.status, rb.start_time, rb.end_time, rb.created_at FROM resource_bookings rb JOIN resources r ON r.id=rb.resource_id JOIN events e ON e.id=rb.event_id LEFT JOIN users u ON u.id=rb.booked_by ${scope} ORDER BY rb.created_at DESC`, params);
       return res.json({ type, rows: result.rows, summary: { total: result.rowCount } });
     }
-    if (isEmployee) { where.push(`(t.assigned_to_id = ${add(req.userId)} OR t.assigned_dept_id = (SELECT department_id FROM users WHERE id = ${add(req.userId)}))`); }
+    where.push("t.deleted_at IS NULL");
+    if (isEmployee) { where.push(`t.assigned_to_id = ${add(req.userId)}`); }
     else if (isHead) where.push(`t.assigned_dept_id = (SELECT department_id FROM users WHERE id = ${add(req.userId)})`);
     if (from) where.push(`t.created_at >= ${add(from)}`);
     if (to) where.push(`t.created_at < (${add(to)}::date + INTERVAL '1 day')`);

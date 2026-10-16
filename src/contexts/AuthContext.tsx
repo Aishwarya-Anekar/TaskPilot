@@ -8,10 +8,20 @@ export interface User {
   role: string;
   department: string | null;
   semester: string | null;
+  college_role?: string | null;
+  employee_id?: string | null;
+  designation?: string | null;
+  phone_number?: string | null;
+  bio?: string | null;
+  profile_photo?: string | null;
+  created_at?: string;
   sms_notifications: boolean;
   email_notifications: boolean;
   push_notifications: boolean;
-  created_at: string;
+  task_assignment_notifications?: boolean;
+  task_deadline_notifications?: boolean;
+  event_reminder_notifications?: boolean;
+  task_status_notifications?: boolean;
 }
 
 interface AuthContextType {
@@ -19,18 +29,8 @@ interface AuthContextType {
   token: string | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (data: RegisterData) => Promise<void>;
   logout: () => void;
   refreshUser: () => Promise<void>;
-}
-
-interface RegisterData {
-  name: string;
-  email: string;
-  password: string;
-  department?: string;
-  semester?: string;
-  role?: string;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -71,16 +71,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(data.user);
   };
 
-  const register = async (regData: RegisterData) => {
-    const data = await apiPost<{ user: User; token: string }>(
-      "/auth/register",
-      regData
-    );
-    localStorage.setItem("cc_token", data.token);
-    setToken(data.token);
-    setUser(data.user);
-  };
-
   const logout = () => {
     localStorage.removeItem("cc_token");
     setToken(null);
@@ -89,7 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, token, loading, login, register, logout, refreshUser }}
+      value={{ user, token, loading, login, logout, refreshUser }}
     >
       {children}
     </AuthContext.Provider>

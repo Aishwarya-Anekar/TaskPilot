@@ -6,7 +6,9 @@ import pool from "../db.js";
 import { authenticate, AuthRequest } from "../middleware/auth.js";
 import { notifyTaskAudience } from "../notifications.js";
 import {
+  EVENT_CATEGORIES,
   EVENT_STATUSES,
+  TASK_CATEGORIES,
   TASK_PRIORITIES,
   TASK_STATUSES,
   isOneOf,
@@ -32,13 +34,14 @@ const router = Router();
 // EVENTS SECTION
 // ==========================================
 
-// GET /api/tasks/events/all - List all events
+// GET /api/tasks/events/all - List all active events
 router.get("/events/all", authenticate, async (_req: AuthRequest, res: Response) => {
   try {
     const result = await pool.query(
       `SELECT e.*, u.name as coordinator_name
        FROM events e
        LEFT JOIN users u ON e.coordinator_id = u.id
+       WHERE e.deleted_at IS NULL
        ORDER BY e.start_date ASC`
     );
     res.json(result.rows);
@@ -48,15 +51,151 @@ router.get("/events/all", authenticate, async (_req: AuthRequest, res: Response)
   }
 });
 
-// POST /api/tasks/events - Create new event (Admins and Super Admins only)
-router.post("/events", authenticate, async (req: AuthRequest, res: Response) => {
+// GET /api/tasks/events/:id - Event details with task summary
+router.get("/events/:id", authenticate, async (req: AuthRequest, res: Response) => {
   try {
-    if (req.userRole !== "admin" && req.userRole !== "super_admin") {
-      res.status(403).json({ error: "Admin access required" });
+    const { id } = req.params;
+    const eventResult = await pool.query(
+      `SELECT e.*, u.name as coordinator_name
+       FROM events e
+       LEFT JOIN users u ON e.coordinator_id = u.id
+       WHERE e.id = $1 AND e.deleted_at IS NULL`,
+      [id]
+    );
+
+    if (eventResult.rows.length === 0) {
+      res.status(404).json({ error: "Event not found" });
       return;
     }
 
-    const { title, description, location, start_date, end_date, coordinator_id, status } = req.body;
+    const event = eventResult.rows[0];
+    const taskCountResult = await pool.query(
+      `SELECT
+         COUNT(*)::integer AS total_tasks,
+         COUNT(*) FILTER (WHERE status = 'Completed' OR status = 'Approved')::integer AS completed_tasks,
+         COUNT(*) FILTER (WHERE status = 'Pending')::integer AS pending_tasks,
+         COUNT(*) FILTER (WHERE status = 'Under Review' OR status = 'Submitted for Review')::integer AS under_review_tasks,
+         COUNT(*) FILTER (WHERE status IN ('Pending', 'In Progress', 'Under Review', 'Submitted for Review') AND due_date IS NOT NULL AND due_date < NOW())::integer AS overdue_tasks
+       FROM tasks
+       WHERE event_id = $1 AND deleted_at IS NULL`,
+      [id]
+    );
+
+    const stats = taskCountResult.rows[0];
+    const completionPercent = stats.total_tasks > 0 ? Math.round((stats.completed_tasks / stats.total_tasks) * 100) : 0;
+
+    res.json({
+      ...event,
+      task_stats: {
+        total_tasks: Number(stats.total_tasks || 0),
+        completed_tasks: Number(stats.completed_tasks || 0),
+        pending_tasks: Number(stats.pending_tasks || 0),
+        under_review_tasks: Number(stats.under_review_tasks || 0),
+        overdue_tasks: Number(stats.overdue_tasks || 0),
+        completion_percent: completionPercent,
+      },
+    });
+  } catch (err) {
+    console.error("Event detail error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// DELETE /api/tasks/events/:id - Soft delete an event (Super Admin only)
+router.delete("/events/:id", authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    if (req.userRole !== "super_admin") {
+      res.status(403).json({ error: "Super Admin access required" });
+      return;
+    }
+
+    const { id } = req.params;
+    const eventResult = await pool.query("SELECT id, title, status, start_date, end_date, deleted_at FROM events WHERE id = $1", [id]);
+    if (eventResult.rows.length === 0) {
+      res.status(404).json({ error: "Event not found" });
+      return;
+    }
+
+    const event = eventResult.rows[0];
+    if (event.deleted_at) {
+      res.status(409).json({ error: "Event already deleted" });
+      return;
+    }
+
+    const taskCountResult = await pool.query(
+      "SELECT COUNT(*)::integer AS task_count FROM tasks WHERE event_id = $1 AND deleted_at IS NULL",
+      [id]
+    );
+    const taskCount = Number(taskCountResult.rows[0]?.task_count || 0);
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const updateResult = await client.query(
+        `UPDATE events
+         SET deleted_at = NOW(), deleted_by = $1
+         WHERE id = $2 AND deleted_at IS NULL
+         RETURNING id, title, deleted_at`,
+        [req.userId, id]
+      );
+
+      if (updateResult.rows.length === 0) {
+        await client.query("ROLLBACK");
+        res.status(409).json({ error: "Event already deleted" });
+        return;
+      }
+
+      await client.query(
+        `INSERT INTO activity_logs (user_id, action, details)
+         VALUES ($1, $2, $3)`,
+        [
+          req.userId,
+          "Delete Event",
+          `Deleted event "${event.title}" with ${taskCount} associated task(s).`,
+        ]
+      );
+
+      await client.query("COMMIT");
+      res.json({
+        message: "Event deleted successfully",
+        event_id: Number(id),
+        title: event.title,
+        task_count: taskCount,
+        deleted_at: updateResult.rows[0].deleted_at,
+      });
+    } catch (dbError) {
+      await client.query("ROLLBACK");
+      throw dbError;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error("Delete event error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// POST /api/tasks/events - Create new event (Super Admins only)
+router.post("/events", authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    if (req.userRole !== "super_admin") {
+      res.status(403).json({ error: "Super Admin access required" });
+      return;
+    }
+
+    const {
+      title,
+      description,
+      location,
+      category,
+      department_id,
+      start_date,
+      end_date,
+      coordinator_id,
+      status,
+      approval_required,
+      approval_status,
+    } = req.body;
     if (!isNonEmptyString(title)) {
       res.status(400).json({ error: "Event title is required" });
       return;
@@ -66,13 +205,26 @@ router.post("/events", authenticate, async (req: AuthRequest, res: Response) => 
       res.status(400).json({ error: dateError });
       return;
     }
+    if (category !== undefined && !isOneOf(category, EVENT_CATEGORIES)) {
+      res.status(400).json({ error: "Invalid event category" });
+      return;
+    }
     if (status !== undefined && !isOneOf(status, EVENT_STATUSES)) {
       res.status(400).json({ error: "Invalid event status" });
       return;
     }
+    if (approval_status !== undefined && !isOneOf(approval_status, ["Not Required", "Pending Approval", "Approved", "Rejected"])) {
+      res.status(400).json({ error: "Invalid approval status" });
+      return;
+    }
     const coordinatorId = coordinator_id === undefined ? req.userId : parsePositiveId(coordinator_id);
+    const departmentId = department_id === undefined ? null : parsePositiveId(department_id);
     if (!coordinatorId) {
       res.status(400).json({ error: "Coordinator ID must be a valid positive integer" });
+      return;
+    }
+    if (department_id !== undefined && !departmentId) {
+      res.status(400).json({ error: "Department ID must be a valid positive integer" });
       return;
     }
     const coordinator = await pool.query("SELECT id FROM users WHERE id = $1", [coordinatorId]);
@@ -82,12 +234,16 @@ router.post("/events", authenticate, async (req: AuthRequest, res: Response) => 
     }
 
     const cleanTitle = title.trim();
+    const finalApprovalRequired = Boolean(approval_required === true || approval_required === "true");
+    const finalApprovalStatus = finalApprovalRequired
+      ? (approval_status && approval_status !== "Not Required" ? approval_status : "Pending Approval")
+      : "Not Required";
     const qrKey = `qr_${cleanTitle.replace(/\s+/g, "_").toLowerCase()}_${Date.now()}`;
     const result = await pool.query(
-      `INSERT INTO events (title, description, location, start_date, end_date, coordinator_id, status, qr_code_key)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO events (title, description, location, category, department_id, start_date, end_date, coordinator_id, status, approval_required, approval_status, qr_code_key)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING *`,
-      [cleanTitle, typeof description === "string" ? description.trim() : "", typeof location === "string" ? location.trim() : "", start_date, end_date, coordinatorId, status || "Draft", qrKey]
+      [cleanTitle, typeof description === "string" ? description.trim() : "", typeof location === "string" ? location.trim() : "", category || "Other", departmentId, start_date, end_date, coordinatorId, status || "Draft", finalApprovalRequired, finalApprovalStatus, qrKey]
     );
 
     // Create activity log
@@ -270,7 +426,7 @@ router.get("/", authenticate, async (req: AuthRequest, res: Response) => {
     
     const params: (number | string)[] = [];
     let paramIdx = 1;
-    const whereClauses: string[] = [];
+    const whereClauses: string[] = ["t.deleted_at IS NULL"];
 
     // Role restrictions
     if (isEmployee) {
@@ -317,10 +473,7 @@ router.get("/", authenticate, async (req: AuthRequest, res: Response) => {
       paramIdx++;
     }
 
-    if (whereClauses.length > 0) {
-      query += ` WHERE ${whereClauses.join(" AND ")}`;
-    }
-    
+    query += ` WHERE ${whereClauses.join(" AND ")}`;
     query += ` ORDER BY t.due_date ASC, t.created_at DESC`;
 
     const result = await pool.query(query, params);
@@ -346,21 +499,25 @@ router.get("/latest", authenticate, async (req: AuthRequest, res: Response) => {
     `;
     
     const params = [];
+    const filters: string[] = ["t.deleted_at IS NULL"];
+
     if (isEmployee) {
       const userRes = await pool.query("SELECT department_id FROM users WHERE id = $1", [req.userId]);
       const deptId = userRes.rows[0]?.department_id;
-      query += deptId
-        ? ` WHERE t.assigned_to_id = $1 OR t.assigned_dept_id = $2`
-        : ` WHERE t.assigned_to_id = $1`;
+      const userFilter = deptId
+        ? ` (t.assigned_to_id = $1 OR t.assigned_dept_id = $2)`
+        : ` (t.assigned_to_id = $1)`;
+      filters.push(userFilter);
       params.push(req.userId!);
       if (deptId) params.push(deptId);
     } else if (isDeptHead) {
       const userRes = await pool.query("SELECT department_id FROM users WHERE id = $1", [req.userId]);
       const deptId = userRes.rows[0]?.department_id;
-      query += ` WHERE t.assigned_dept_id = $1`;
+      filters.push("t.assigned_dept_id = $1");
       params.push(deptId || -1);
     }
 
+    query += ` WHERE ${filters.join(" AND ")}`;
     query += ` ORDER BY t.updated_at DESC LIMIT 10`;
     const result = await pool.query(query, params);
 
@@ -393,6 +550,8 @@ router.get("/history", authenticate, async (req: AuthRequest, res: Response) => 
     let paramIdx = 1;
     const whereClauses = [];
 
+    whereClauses.push("t.deleted_at IS NULL");
+
     if (status && status !== "All") {
       whereClauses.push(`t.status = $${paramIdx++}`);
       params.push(status as string);
@@ -417,6 +576,87 @@ router.get("/history", authenticate, async (req: AuthRequest, res: Response) => 
   }
 });
 
+// DELETE /api/tasks/:id - Delete a task (Super Admin only)
+router.delete("/:id", authenticate, async (req: AuthRequest, res: Response) => {
+  try {
+    if (req.userRole !== "super_admin") {
+      res.status(403).json({ error: "Super Admin access required" });
+      return;
+    }
+
+    const rawId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const taskId = Number.parseInt(rawId || "", 10);
+    if (!Number.isInteger(taskId) || taskId <= 0) {
+      res.status(400).json({ error: "Task ID must be a valid positive integer" });
+      return;
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const taskExists = await client.query(
+        `SELECT id, title, event_id, deleted_at FROM tasks WHERE id = $1`,
+        [taskId]
+      );
+
+      if (taskExists.rows.length === 0) {
+        await client.query("ROLLBACK");
+        res.status(404).json({ error: "Task not found" });
+        return;
+      }
+
+      const task = taskExists.rows[0];
+      if (task.deleted_at) {
+        await client.query("ROLLBACK");
+        res.status(409).json({ error: "Task already deleted" });
+        return;
+      }
+
+      const deleted = await client.query(
+        `UPDATE tasks
+         SET deleted_at = NOW(), deleted_by = $1
+         WHERE id = $2 AND deleted_at IS NULL
+         RETURNING id, title, event_id, deleted_at`,
+        [req.userId, taskId]
+      );
+
+      if (deleted.rows.length === 0) {
+        await client.query("ROLLBACK");
+        res.status(409).json({ error: "Task already deleted" });
+        return;
+      }
+
+      await client.query(
+        `INSERT INTO activity_logs (user_id, action, details)
+         VALUES ($1, $2, $3)`,
+        [
+          req.userId,
+          "Delete Task",
+          `Deleted task "${task.title}" from event ${task.event_id ?? "General"}.`,
+        ]
+      );
+
+      await client.query("COMMIT");
+      res.json({
+        message: "Task deleted successfully",
+        task_id: taskId,
+        title: task.title,
+        event_id: task.event_id,
+        deleted_at: deleted.rows[0].deleted_at,
+      });
+    } catch (dbError) {
+      await client.query("ROLLBACK");
+      throw dbError;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error("Delete task error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 // GET /api/tasks/:id - Detailed view
 router.get("/:id", authenticate, async (req: AuthRequest, res: Response) => {
   try {
@@ -429,7 +669,7 @@ router.get("/:id", authenticate, async (req: AuthRequest, res: Response) => {
        LEFT JOIN events e ON t.event_id = e.id
        LEFT JOIN users u ON t.assigned_to_id = u.id
        LEFT JOIN departments d ON t.assigned_dept_id = d.id
-       WHERE t.id = $1`,
+       WHERE t.id = $1 AND t.deleted_at IS NULL`,
       [id]
     );
 
@@ -494,10 +734,24 @@ router.post("/", authenticate, async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    const { event_id, title, description, assigned_to_id, assigned_dept_id, priority, due_date } = req.body;
+    const {
+      event_id,
+      title,
+      description,
+      category,
+      assigned_to_id,
+      assigned_dept_id,
+      priority,
+      due_date,
+      verification_required,
+    } = req.body;
     const eventId = parsePositiveId(event_id);
     if (!isNonEmptyString(title) || !eventId) {
       res.status(400).json({ error: "Title and Event ID are required" });
+      return;
+    }
+    if (category !== undefined && !isOneOf(category, TASK_CATEGORIES)) {
+      res.status(400).json({ error: "Invalid task category" });
       return;
     }
     if (priority !== undefined && !isOneOf(priority, TASK_PRIORITIES)) {
@@ -527,17 +781,19 @@ router.post("/", authenticate, async (req: AuthRequest, res: Response) => {
     }
 
     const result = await pool.query(
-      `INSERT INTO tasks (event_id, title, description, assigned_to_id, assigned_dept_id, priority, due_date, status, progress)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'Pending', 0)
+      `INSERT INTO tasks (event_id, title, description, category, assigned_to_id, assigned_dept_id, priority, due_date, verification_required, status, progress)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'Pending', 0)
        RETURNING *`,
       [
         eventId,
         title.trim(),
         typeof description === "string" ? description.trim() : "",
+        category || "Administrative Work",
         assignedToId,
         assignedDeptId,
         priority || "Medium",
-        due_date || null
+        due_date || null,
+        Boolean(verification_required === true || verification_required === "true"),
       ]
     );
 
@@ -577,7 +833,7 @@ router.put("/:id", authenticate, upload.single("proof"), async (req: AuthRequest
     const { id } = req.params;
     const { status, progress, priority, assigned_to_id, assigned_dept_id, comment } = req.body;
 
-    const taskCheck = await pool.query("SELECT * FROM tasks WHERE id = $1", [id]);
+    const taskCheck = await pool.query("SELECT * FROM tasks WHERE id = $1 AND deleted_at IS NULL", [id]);
     if (taskCheck.rows.length === 0) {
       res.status(404).json({ error: "Task not found" });
       return;

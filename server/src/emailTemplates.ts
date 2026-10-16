@@ -33,3 +33,46 @@ export function renderWelcomeEmail(name: string, link: string) {
     link,
   });
 }
+
+export interface VisitorInvitationData {
+  visitorName: string;
+  organization?: string | null;
+  purpose: string;
+  visitDateTime: string;
+  hostName: string;
+  eventName?: string | null;
+  location?: string | null;
+  passCode: string;
+  collegeName: string;
+  supportEmail?: string | null;
+}
+
+export function renderVisitorInvitationEmail(data: VisitorInvitationData) {
+  const detailRows = [
+    ["Visitor", data.visitorName],
+    ...(data.organization ? [["Organization", data.organization]] : []),
+    ["Purpose", data.purpose],
+    ["Visit date and time", data.visitDateTime],
+    ["Host", data.hostName],
+    ...(data.eventName ? [["Event", data.eventName]] : []),
+    ...(data.location ? [["Location", data.location]] : []),
+    ["Visitor pass", data.passCode],
+  ];
+  const text = [
+    `Dear ${data.visitorName},`,
+    "",
+    `Your visit to ${data.collegeName} has been scheduled.`,
+    "",
+    "VISIT DETAILS",
+    ...detailRows.map(([label, value]) => `${label}: ${value}`),
+    "",
+    "Please present this visitor pass to authorized college staff at the entrance.",
+    ...(data.supportEmail ? [`For corrections, contact ${data.supportEmail}.`] : []),
+    "",
+    `Regards, ${data.collegeName}`,
+    "Visitor Management System | TaskPilot",
+  ].join("\n");
+  const rows = detailRows.map(([label, value]) => `<tr><th align="left" style="padding:9px 12px;color:#475569;border-bottom:1px solid #e2e8f0">${escapeHtml(label)}</th><td style="padding:9px 12px;color:#0f172a;border-bottom:1px solid #e2e8f0">${escapeHtml(value)}</td></tr>`).join("");
+  const html = `<!doctype html><html><body style="margin:0;background:#f1f5f9;font-family:Arial,sans-serif;color:#0f172a;line-height:1.55"><div style="max-width:620px;margin:24px auto;background:#fff;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden"><div style="padding:22px 26px;background:#10243a;color:#fff"><p style="margin:0;font-size:12px;letter-spacing:1px;text-transform:uppercase">TaskPilot Visitor Management</p><h1 style="margin:8px 0 0;font-size:21px">Visitor Invitation</h1></div><div style="padding:24px 26px"><p>Dear ${escapeHtml(data.visitorName)},</p><p>Your visit to <strong>${escapeHtml(data.collegeName)}</strong> has been scheduled.</p><h2 style="margin:22px 0 8px;font-size:14px">Visit details</h2><table role="presentation" style="width:100%;border-collapse:collapse;font-size:13px">${rows}</table><p style="margin-top:22px">Please present this visitor pass to authorized college staff at the entrance.</p>${data.supportEmail ? `<p>If your visit details need correction, contact <a href="mailto:${escapeHtml(data.supportEmail)}">${escapeHtml(data.supportEmail)}</a>.</p>` : ""}<p style="margin-top:24px">Regards,<br><strong>${escapeHtml(data.collegeName)}</strong><br><span style="color:#64748b;font-size:12px">Visitor Management System | TaskPilot</span></p></div></div></body></html>`;
+  return { subject: `Visitor Invitation — ${data.collegeName} | ${data.visitDateTime}`, html, text };
+}

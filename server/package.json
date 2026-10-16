@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "build": "tsc"
+    "build": "tsc",
+    "email:verify": "node --import tsx src/emailVerification.ts",
+    "email:test": "node --import tsx src/emailVerification.ts --send-test"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

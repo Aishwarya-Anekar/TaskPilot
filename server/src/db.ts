@@ -66,9 +66,11 @@ export async function initDb() {
         name VARCHAR(100) NOT NULL,
         email VARCHAR(255) UNIQUE NOT NULL,
         password_hash VARCHAR(255) NOT NULL,
-        role VARCHAR(20) DEFAULT 'employee', -- 'super_admin', 'admin', 'dept_head', 'employee'
+        role VARCHAR(20) DEFAULT 'employee', -- 'super_admin', 'dept_head', 'employee'
         department_id INTEGER REFERENCES departments(id) ON DELETE SET NULL,
         semester VARCHAR(20), -- keep for compatibility if needed
+        password_setup_required BOOLEAN NOT NULL DEFAULT false,
+        is_active BOOLEAN NOT NULL DEFAULT true,
         sms_notifications BOOLEAN DEFAULT true,
         email_notifications BOOLEAN DEFAULT true,
         push_notifications BOOLEAN DEFAULT false,
@@ -76,6 +78,110 @@ export async function initDb() {
         created_at TIMESTAMP DEFAULT NOW()
       );
     `);
+    await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_setup_required BOOLEAN NOT NULL DEFAULT false");
+    await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true");
+    await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS college_role VARCHAR(40)");
+    await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_id VARCHAR(40)");
+    await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS designation VARCHAR(120)");
+    await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_number VARCHAR(40)");
+    await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS date_of_joining DATE");
+    await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS bio VARCHAR(500)");
+    await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_photo VARCHAR(255)");
+    await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS task_assignment_notifications BOOLEAN NOT NULL DEFAULT true");
+    await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS task_deadline_notifications BOOLEAN NOT NULL DEFAULT true");
+    await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS event_reminder_notifications BOOLEAN NOT NULL DEFAULT true");
+    await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS task_status_notifications BOOLEAN NOT NULL DEFAULT true");
+    await client.query(`
+      UPDATE users SET college_role = CASE role
+        WHEN 'super_admin' THEN 'super_admin'
+        WHEN 'dept_head' THEN 'hod'
+        ELSE 'staff'
+      END WHERE college_role IS NULL;
+      ALTER TABLE users ALTER COLUMN college_role SET DEFAULT 'staff';
+      ALTER TABLE users ALTER COLUMN college_role SET NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS users_employee_id_unique
+        ON users (employee_id) WHERE employee_id IS NOT NULL;
+    `);
+
+    await client.query("ALTER TABLE departments ADD COLUMN IF NOT EXISTS department_code VARCHAR(30)");
+    await client.query("ALTER TABLE departments ADD COLUMN IF NOT EXISTS department_type VARCHAR(20) NOT NULL DEFAULT 'administrative'");
+    await client.query("ALTER TABLE departments ADD COLUMN IF NOT EXISTS hod_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL");
+    await client.query("ALTER TABLE departments ADD COLUMN IF NOT EXISTS contact_email VARCHAR(255)");
+    await client.query("ALTER TABLE departments ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true");
+    await client.query(`
+      UPDATE departments d SET hod_user_id = (
+        SELECT u.id FROM users u WHERE u.department_id = d.id AND u.role = 'dept_head'
+        ORDER BY u.created_at ASC, u.id ASC LIMIT 1
+      ) WHERE d.hod_user_id IS NULL AND EXISTS (
+        SELECT 1 FROM users u WHERE u.department_id = d.id AND u.role = 'dept_head'
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS departments_code_unique
+        ON departments (LOWER(department_code)) WHERE department_code IS NOT NULL AND department_code <> '';
+      CREATE UNIQUE INDEX IF NOT EXISTS departments_hod_unique
+        ON departments (hod_user_id) WHERE hod_user_id IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS users_hod_department_unique
+        ON users (department_id) WHERE role = 'dept_head' AND department_id IS NOT NULL;
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS system_settings (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        maintenance_mode BOOLEAN NOT NULL DEFAULT false,
+        enable_audit BOOLEAN NOT NULL DEFAULT true,
+        enable_notifications BOOLEAN NOT NULL DEFAULT true,
+        organization_name VARCHAR(160) NOT NULL DEFAULT 'TaskPilot Organization',
+        support_email VARCHAR(255) NOT NULL DEFAULT 'support@taskpilot.com',
+        institution_code VARCHAR(40),
+        college_address TEXT,
+        timezone VARCHAR(80) NOT NULL DEFAULT 'Asia/Kolkata',
+        academic_year VARCHAR(30),
+        academic_term VARCHAR(40),
+        working_days SMALLINT[] NOT NULL DEFAULT ARRAY[1,2,3,4,5]::smallint[],
+        working_hours_start TIME NOT NULL DEFAULT '09:00',
+        working_hours_end TIME NOT NULL DEFAULT '17:00',
+        updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+      INSERT INTO system_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+    `);
+    await client.query("ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS institution_code VARCHAR(40)");
+    await client.query("ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS college_address TEXT");
+    await client.query("ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS timezone VARCHAR(80) NOT NULL DEFAULT 'Asia/Kolkata'");
+    await client.query("ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS academic_year VARCHAR(30)");
+    await client.query("ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS academic_term VARCHAR(40)");
+    await client.query("ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS working_days SMALLINT[] NOT NULL DEFAULT ARRAY[1,2,3,4,5]::smallint[]");
+    await client.query("ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS working_hours_start TIME NOT NULL DEFAULT '09:00'");
+    await client.query("ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS working_hours_end TIME NOT NULL DEFAULT '17:00'");
+
+    const initialAdminName = process.env.INITIAL_SUPER_ADMIN_NAME?.trim();
+    const initialAdminEmail = process.env.INITIAL_SUPER_ADMIN_EMAIL?.trim().toLowerCase();
+    const initialAdminPassword = process.env.INITIAL_SUPER_ADMIN_PASSWORD;
+    const bootstrapValues = [initialAdminName, initialAdminEmail, initialAdminPassword];
+    if (bootstrapValues.some(Boolean) && !bootstrapValues.every(Boolean)) {
+      throw new Error("Set INITIAL_SUPER_ADMIN_NAME, INITIAL_SUPER_ADMIN_EMAIL, and INITIAL_SUPER_ADMIN_PASSWORD together.");
+    }
+    if (initialAdminName && initialAdminEmail && initialAdminPassword) {
+      if (initialAdminName.length > 100 || !/^\S+@\S+\.\S+$/.test(initialAdminEmail)) {
+        throw new Error("INITIAL_SUPER_ADMIN_NAME or INITIAL_SUPER_ADMIN_EMAIL is invalid.");
+      }
+      if (initialAdminPassword.length < 16) {
+        throw new Error("INITIAL_SUPER_ADMIN_PASSWORD must contain at least 16 characters.");
+      }
+      const existingSuperAdmin = await client.query("SELECT id FROM users WHERE role = 'super_admin' LIMIT 1");
+      if (!existingSuperAdmin.rows.length) {
+        const passwordHash = await bcrypt.hash(initialAdminPassword, 12);
+        await client.query(
+          `INSERT INTO users (name, email, password_hash, role, email_verified, password_setup_required)
+           VALUES ($1, $2, $3, 'super_admin', true, false)
+           ON CONFLICT (email) DO NOTHING`,
+          [initialAdminName, initialAdminEmail, passwordHash]
+        );
+        const bootstrappedAdmin = await client.query("SELECT id FROM users WHERE role = 'super_admin' LIMIT 1");
+        if (!bootstrappedAdmin.rows.length) {
+          throw new Error("Initial Super Admin could not be created; the configured email may already belong to another account.");
+        }
+      }
+    }
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS email_verification_tokens (
@@ -95,13 +201,21 @@ export async function initDb() {
         id SERIAL PRIMARY KEY,
         name VARCHAR(255) UNIQUE NOT NULL,
         description TEXT DEFAULT '',
+        event_category VARCHAR(60) DEFAULT 'Other',
         default_duration_minutes INTEGER NOT NULL DEFAULT 120 CHECK (default_duration_minutes > 0),
+        default_location VARCHAR(255) DEFAULT '',
         suggested_department_ids INTEGER[] DEFAULT '{}',
         default_responsible_role VARCHAR(30),
+        is_active BOOLEAN NOT NULL DEFAULT true,
         created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       );
+    `);
+    await client.query("ALTER TABLE event_templates ADD COLUMN IF NOT EXISTS event_category VARCHAR(60) DEFAULT 'Other'");
+    await client.query("ALTER TABLE event_templates ADD COLUMN IF NOT EXISTS default_location VARCHAR(255) DEFAULT ''");
+    await client.query("ALTER TABLE event_templates ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true");
+    await client.query(`
       CREATE TABLE IF NOT EXISTS event_template_tasks (
         id SERIAL PRIMARY KEY,
         template_id INTEGER NOT NULL REFERENCES event_templates(id) ON DELETE CASCADE,
@@ -113,12 +227,14 @@ export async function initDb() {
         relative_due_hours INTEGER DEFAULT 24,
         sort_order INTEGER DEFAULT 0
       );
+
       CREATE TABLE IF NOT EXISTS event_template_subtasks (
         id SERIAL PRIMARY KEY,
         template_task_id INTEGER NOT NULL REFERENCES event_template_tasks(id) ON DELETE CASCADE,
         title VARCHAR(255) NOT NULL,
         sort_order INTEGER DEFAULT 0
       );
+
       CREATE INDEX IF NOT EXISTS event_template_tasks_template_idx ON event_template_tasks (template_id, sort_order);
     `);
 
@@ -177,19 +293,34 @@ export async function initDb() {
         title VARCHAR(255) NOT NULL,
         description TEXT,
         location VARCHAR(255),
+        category VARCHAR(60) DEFAULT 'Other',
+        department_id INTEGER REFERENCES departments(id) ON DELETE SET NULL,
         start_date TIMESTAMP,
         end_date TIMESTAMP,
         coordinator_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-        status VARCHAR(30) DEFAULT 'Draft', -- 'Draft', 'Active', 'Completed', 'Cancelled'
+        status VARCHAR(30) DEFAULT 'Draft', -- 'Draft', 'Active', 'Completed', 'Cancelled', 'Pending Approval'
+        approval_required BOOLEAN NOT NULL DEFAULT false,
+        approval_status VARCHAR(30) NOT NULL DEFAULT 'Not Required',
+        approval_notes TEXT,
         qr_code_key VARCHAR(100),
         recurrence_type VARCHAR(20),
         recurrence_interval INTEGER,
         recurrence_until TIMESTAMP,
         recurrence_next_at TIMESTAMP,
         template_id INTEGER REFERENCES event_templates(id) ON DELETE SET NULL,
+        deleted_at TIMESTAMP,
+        deleted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
         created_at TIMESTAMP DEFAULT NOW()
       );
     `);
+    await client.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS category VARCHAR(60) DEFAULT 'Other'");
+    await client.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS department_id INTEGER REFERENCES departments(id) ON DELETE SET NULL");
+    await client.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS approval_required BOOLEAN NOT NULL DEFAULT false");
+    await client.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS approval_status VARCHAR(30) NOT NULL DEFAULT 'Not Required'");
+    await client.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS approval_notes TEXT");
+    await client.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP");
+    await client.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS deleted_by INTEGER REFERENCES users(id) ON DELETE SET NULL");
+    await client.query("CREATE INDEX IF NOT EXISTS events_active_idx ON events (deleted_at, start_date)");
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS visitors (
@@ -205,6 +336,12 @@ export async function initDb() {
         check_out_at TIMESTAMP,
         status VARCHAR(20) NOT NULL DEFAULT 'Expected' CHECK (status IN ('Expected','Checked In','Checked Out','Cancelled')),
         pass_code VARCHAR(80) NOT NULL UNIQUE,
+        email_status VARCHAR(20) NOT NULL DEFAULT 'Not Applicable',
+        email_last_attempt_at TIMESTAMP,
+        email_attempt_count INTEGER NOT NULL DEFAULT 0,
+        email_last_error TEXT,
+        email_request_key UUID,
+        registration_key UUID,
         created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
@@ -223,6 +360,13 @@ export async function initDb() {
       );
       CREATE INDEX IF NOT EXISTS visitor_activity_visitor_idx ON visitor_activity (visitor_id, created_at DESC);
     `);
+    await client.query("ALTER TABLE visitors ADD COLUMN IF NOT EXISTS email_status VARCHAR(20) NOT NULL DEFAULT 'Not Applicable'");
+    await client.query("ALTER TABLE visitors ADD COLUMN IF NOT EXISTS email_last_attempt_at TIMESTAMP");
+    await client.query("ALTER TABLE visitors ADD COLUMN IF NOT EXISTS email_attempt_count INTEGER NOT NULL DEFAULT 0");
+    await client.query("ALTER TABLE visitors ADD COLUMN IF NOT EXISTS email_last_error TEXT");
+    await client.query("ALTER TABLE visitors ADD COLUMN IF NOT EXISTS email_request_key UUID");
+    await client.query("ALTER TABLE visitors ADD COLUMN IF NOT EXISTS registration_key UUID");
+    await client.query("CREATE UNIQUE INDEX IF NOT EXISTS visitors_registration_key_unique ON visitors (registration_key) WHERE registration_key IS NOT NULL");
 
     // Create Tasks Table
     await client.query(`
@@ -231,12 +375,20 @@ export async function initDb() {
         event_id INTEGER REFERENCES events(id) ON DELETE CASCADE,
         title VARCHAR(255) NOT NULL,
         description TEXT,
+        category VARCHAR(40) DEFAULT 'Administrative Work',
         assigned_to_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
         assigned_dept_id INTEGER REFERENCES departments(id) ON DELETE SET NULL,
-        priority VARCHAR(20) DEFAULT 'Medium', -- 'Low', 'Medium', 'High'
-        status VARCHAR(30) DEFAULT 'Pending', -- 'Pending', 'In Progress', 'Under Review', 'Completed', 'Rejected'
+        priority VARCHAR(20) DEFAULT 'Medium', -- 'Low', 'Medium', 'High', 'Urgent'
+        status VARCHAR(30) DEFAULT 'Pending', -- 'Pending', 'In Progress', 'Submitted for Review', 'Approved', 'Rework Required', 'Cancelled'
         progress INTEGER DEFAULT 0,
         due_date TIMESTAMP,
+        verification_required BOOLEAN NOT NULL DEFAULT false,
+        completion_notes TEXT,
+        rework_reason TEXT,
+        submitted_at TIMESTAMP,
+        reviewed_at TIMESTAMP,
+        deleted_at TIMESTAMP,
+        deleted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
         is_overdue BOOLEAN DEFAULT false,
         overdue_at TIMESTAMP,
         proof_url VARCHAR(500),
@@ -245,6 +397,15 @@ export async function initDb() {
         updated_at TIMESTAMP DEFAULT NOW()
       );
     `);
+    await client.query("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS category VARCHAR(40) DEFAULT 'Administrative Work'");
+    await client.query("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS verification_required BOOLEAN NOT NULL DEFAULT false");
+    await client.query("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completion_notes TEXT");
+    await client.query("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS rework_reason TEXT");
+    await client.query("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMP");
+    await client.query("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP");
+    await client.query("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP");
+    await client.query("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS deleted_by INTEGER REFERENCES users(id) ON DELETE SET NULL");
+    await client.query("CREATE INDEX IF NOT EXISTS tasks_active_idx ON tasks (deleted_at, due_date)");
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS escalation_settings (
@@ -284,9 +445,30 @@ export async function initDb() {
         id SERIAL PRIMARY KEY,
         name VARCHAR(100) NOT NULL,
         type VARCHAR(50) NOT NULL, -- 'Room', 'Equipment', 'Service'
-        status VARCHAR(30) DEFAULT 'Available' -- 'Available', 'Maintenance', 'Unavailable'
+        status VARCHAR(30) DEFAULT 'Available', -- 'Available', 'Maintenance', 'Unavailable'
+        resource_code VARCHAR(40),
+        department_id INTEGER REFERENCES departments(id) ON DELETE SET NULL,
+        building_location VARCHAR(160),
+        capacity INTEGER CHECK (capacity IS NULL OR capacity >= 0),
+        quantity INTEGER CHECK (quantity IS NULL OR quantity >= 0),
+        condition_status VARCHAR(30) NOT NULL DEFAULT 'Good',
+        description TEXT,
+        is_active BOOLEAN NOT NULL DEFAULT true,
+        maintenance_task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
       );
     `);
+    await client.query("ALTER TABLE resources ADD COLUMN IF NOT EXISTS resource_code VARCHAR(40)");
+    await client.query("ALTER TABLE resources ADD COLUMN IF NOT EXISTS department_id INTEGER REFERENCES departments(id) ON DELETE SET NULL");
+    await client.query("ALTER TABLE resources ADD COLUMN IF NOT EXISTS building_location VARCHAR(160)");
+    await client.query("ALTER TABLE resources ADD COLUMN IF NOT EXISTS capacity INTEGER CHECK (capacity IS NULL OR capacity >= 0)");
+    await client.query("ALTER TABLE resources ADD COLUMN IF NOT EXISTS quantity INTEGER CHECK (quantity IS NULL OR quantity >= 0)");
+    await client.query("ALTER TABLE resources ADD COLUMN IF NOT EXISTS condition_status VARCHAR(30) NOT NULL DEFAULT 'Good'");
+    await client.query("ALTER TABLE resources ADD COLUMN IF NOT EXISTS description TEXT");
+    await client.query("ALTER TABLE resources ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true");
+    await client.query("ALTER TABLE resources ADD COLUMN IF NOT EXISTS maintenance_task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL");
+    await client.query("ALTER TABLE resources ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT NOW()");
+    await client.query("CREATE UNIQUE INDEX IF NOT EXISTS resources_code_unique ON resources (LOWER(resource_code)) WHERE resource_code IS NOT NULL AND resource_code <> ''");
 
     // Create Resource Bookings Table
     await client.query(`
@@ -321,8 +503,59 @@ export async function initDb() {
         content TEXT NOT NULL,
         created_by INTEGER REFERENCES users(id) ON DELETE CASCADE,
         target_dept_id INTEGER REFERENCES departments(id) ON DELETE CASCADE, -- NULL for all
+        category VARCHAR(40) NOT NULL DEFAULT 'General Notice',
+        priority VARCHAR(20) NOT NULL DEFAULT 'Normal',
+        audience VARCHAR(30) NOT NULL DEFAULT 'college',
+        status VARCHAR(20) NOT NULL DEFAULT 'published',
+        published_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        expires_at TIMESTAMP,
+        acknowledgement_required BOOLEAN NOT NULL DEFAULT false,
+        is_pinned BOOLEAN NOT NULL DEFAULT false,
+        related_event_id INTEGER REFERENCES events(id) ON DELETE SET NULL,
+        related_task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+        archived_at TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
         created_at TIMESTAMP DEFAULT NOW()
       );
+    `);
+
+    await client.query("ALTER TABLE announcements ADD COLUMN IF NOT EXISTS category VARCHAR(40) NOT NULL DEFAULT 'General Notice'");
+    await client.query("ALTER TABLE announcements ADD COLUMN IF NOT EXISTS priority VARCHAR(20) NOT NULL DEFAULT 'Normal'");
+    await client.query("ALTER TABLE announcements ADD COLUMN IF NOT EXISTS audience VARCHAR(30) NOT NULL DEFAULT 'college'");
+    await client.query("ALTER TABLE announcements ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'published'");
+    await client.query("ALTER TABLE announcements ADD COLUMN IF NOT EXISTS published_at TIMESTAMP NOT NULL DEFAULT NOW()");
+    await client.query("ALTER TABLE announcements ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP");
+    await client.query("ALTER TABLE announcements ADD COLUMN IF NOT EXISTS acknowledgement_required BOOLEAN NOT NULL DEFAULT false");
+    await client.query("ALTER TABLE announcements ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT false");
+    await client.query("ALTER TABLE announcements ADD COLUMN IF NOT EXISTS related_event_id INTEGER REFERENCES events(id) ON DELETE SET NULL");
+    await client.query("ALTER TABLE announcements ADD COLUMN IF NOT EXISTS related_task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL");
+    await client.query("ALTER TABLE announcements ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP");
+    await client.query("ALTER TABLE announcements ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT NOW()");
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS announcement_recipients (
+        announcement_id INTEGER NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        PRIMARY KEY (announcement_id, user_id)
+      );
+      CREATE TABLE IF NOT EXISTS announcement_reads (
+        announcement_id INTEGER NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        read_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (announcement_id, user_id)
+      );
+      CREATE TABLE IF NOT EXISTS announcement_acknowledgements (
+        announcement_id INTEGER NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        acknowledged_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (announcement_id, user_id)
+      );
+      CREATE INDEX IF NOT EXISTS announcements_active_idx
+        ON announcements (status, published_at DESC, is_pinned DESC);
+      CREATE INDEX IF NOT EXISTS announcements_department_idx
+        ON announcements (target_dept_id, published_at DESC);
+      CREATE INDEX IF NOT EXISTS announcements_expiry_idx
+        ON announcements (expires_at) WHERE status = 'published';
     `);
 
     // Create Event Feedback Table
@@ -366,9 +599,21 @@ export async function initDb() {
         user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
         action VARCHAR(255) NOT NULL,
         details TEXT,
+        entity_type VARCHAR(40),
+        entity_id INTEGER,
+        outcome VARCHAR(30) NOT NULL DEFAULT 'success',
+        before_data JSONB,
+        after_data JSONB,
         created_at TIMESTAMP DEFAULT NOW()
       );
     `);
+    await client.query("ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS entity_type VARCHAR(40)");
+    await client.query("ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS entity_id INTEGER");
+    await client.query("ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS outcome VARCHAR(30) NOT NULL DEFAULT 'success'");
+    await client.query("ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS before_data JSONB");
+    await client.query("ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS after_data JSONB");
+    await client.query("CREATE INDEX IF NOT EXISTS activity_logs_created_idx ON activity_logs (created_at DESC, id DESC)");
+    await client.query("CREATE INDEX IF NOT EXISTS activity_logs_entity_idx ON activity_logs (entity_type, entity_id, created_at DESC)");
 
     // Create Messages Table
     await client.query(`
@@ -380,6 +625,45 @@ export async function initDb() {
         sent_by_user BOOLEAN DEFAULT false,
         created_at TIMESTAMP DEFAULT NOW()
       );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS conversations (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        channel_type VARCHAR(20) NOT NULL CHECK (channel_type IN ('department', 'event')),
+        department_id INTEGER REFERENCES departments(id) ON DELETE RESTRICT,
+        event_id INTEGER REFERENCES events(id) ON DELETE RESTRICT,
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        CHECK (
+          (channel_type = 'department' AND department_id IS NOT NULL AND event_id IS NULL)
+          OR (channel_type = 'event' AND event_id IS NOT NULL AND department_id IS NULL)
+        )
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS conversations_department_unique
+        ON conversations (department_id) WHERE channel_type = 'department';
+      CREATE UNIQUE INDEX IF NOT EXISTS conversations_event_unique
+        ON conversations (event_id) WHERE channel_type = 'event';
+      CREATE TABLE IF NOT EXISTS conversation_members (
+        conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        last_read_at TIMESTAMP,
+        joined_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (conversation_id, user_id)
+      );
+      CREATE INDEX IF NOT EXISTS conversation_members_user_idx
+        ON conversation_members (user_id, conversation_id);
+      CREATE TABLE IF NOT EXISTS conversation_messages (
+        id SERIAL PRIMARY KEY,
+        conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        sender_name VARCHAR(100) NOT NULL,
+        text TEXT NOT NULL CHECK (length(trim(text)) > 0),
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS conversation_messages_page_idx
+        ON conversation_messages (conversation_id, id DESC);
     `);
 
     await client.query(`
@@ -416,8 +700,13 @@ export async function initDb() {
       depts[d.name] = d.id;
     });
 
+    // Demo accounts and sample workflow data are opt-in and never created in production.
+    if (process.env.NODE_ENV !== "production" && process.env.SEED_DEMO_DATA === "true") {
+    if (!process.env.SEED_ADMIN_PASSWORD || process.env.SEED_ADMIN_PASSWORD.length < 12) {
+      throw new Error("SEED_ADMIN_PASSWORD must be configured with at least 12 characters when SEED_DEMO_DATA is enabled.");
+    }
     // Seed users
-    const hash = await bcrypt.hash("TaskPilot@2026", 10);
+    const hash = await bcrypt.hash(process.env.SEED_ADMIN_PASSWORD, 12);
 
     const ensureUser = async (name: string, email: string, role: string, departmentId?: number) => {
       await client.query(
@@ -430,7 +719,6 @@ export async function initDb() {
     };
 
     const superAdminId = await ensureUser("Super Admin", "superadmin@taskpilot.com", "super_admin");
-    const adminId = await ensureUser("Admin User", "admin@taskpilot.com", "admin", depts["Operations"]);
     await ensureUser("Dept Head (IT)", "depthead@taskpilot.com", "dept_head", depts["IT Support"]);
     const employeeId = await ensureUser("Employee (IT)", "employee@taskpilot.com", "employee", depts["IT Support"]);
 
@@ -457,14 +745,14 @@ export async function initDb() {
         INSERT INTO events (title, description, location, start_date, end_date, coordinator_id, status, qr_code_key)
         VALUES ('Annual Tech Summit 2026', 'A large tech summit with workshops and seminars.', 'Main Auditorium', NOW() + INTERVAL '2 days', NOW() + INTERVAL '3 days', $1, 'Active', 'tech_summit_2026_qr')
         RETURNING id
-      `, [adminId]);
+      `, [superAdminId]);
       const eventId = event.rows[0].id;
 
     // Seed resource booking
     await client.query(`
       INSERT INTO resource_bookings (resource_id, event_id, booked_by, start_time, end_time)
       VALUES ((SELECT id FROM resources WHERE name='Main Auditorium'), $1, $2, NOW() + INTERVAL '2 days', NOW() + INTERVAL '3 days')
-      `, [eventId, adminId]);
+      `, [eventId, superAdminId]);
 
     // Seed tasks for this event
     const task1 = await client.query(`
@@ -497,7 +785,7 @@ export async function initDb() {
     await client.query(`
       INSERT INTO announcements (title, content, created_by) VALUES
         ('Welcome to TaskPilot Operations', 'TaskPilot has launched today. All organizational workflows are now orchestrated digitally. Please complete your tasks accordingly.', $1)
-      `, [adminId]);
+      `, [superAdminId]);
 
     // Seed system log
     await client.query(`
@@ -506,6 +794,7 @@ export async function initDb() {
       `, [superAdminId]);
 
       console.log("Default demo event, task, and related data created.");
+    }
     }
     console.log("Seed data checked successfully. Existing database data preserved.");
 

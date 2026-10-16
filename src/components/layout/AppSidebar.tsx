@@ -3,6 +3,8 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/contexts/AuthContext";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { UPLOADS_BASE } from "@/lib/api";
 
 export function AppSidebar() {
   const location = useLocation();
@@ -26,7 +28,7 @@ export function AppSidebar() {
 
   const menuItems = [
     { title: "Dashboard", icon: Home, path: "/dashboard" },
-    ...((user?.role === "admin" || user?.role === "super_admin" || user?.role === "dept_head")
+    ...((user?.role === "super_admin" || user?.role === "dept_head")
       ? [{ title: "Create Task", icon: FileText, path: "/report" }]
       : []),
     { title: "Events & Tasks", icon: Search, path: "/track" },
@@ -34,10 +36,10 @@ export function AppSidebar() {
     { title: "Notifications", icon: Bell, path: "/notifications" },
     { title: "Reports", icon: BarChart3, path: "/reports" },
     { title: "Calendar", icon: CalendarDays, path: "/calendar" },
-    ...((user?.role === "admin" || user?.role === "super_admin" || user?.role === "dept_head") ? [{ title: "Visitors", icon: UsersRound, path: "/visitors" }] : []),
+    ...((user?.role === "super_admin" || user?.role === "dept_head") ? [{ title: "Visitors", icon: UsersRound, path: "/visitors" }] : []),
     { title: "History", icon: Clock, path: "/history" },
     { title: "Profile", icon: User, path: "/profile" },
-    ...((user?.role === "admin" || user?.role === "super_admin")
+    ...((user?.role === "super_admin")
       ? [{ title: "Management", icon: Shield, path: "/admin" }, { title: "Event Templates", icon: Copy, path: "/event-templates" }]
       : []),
   ];
@@ -127,9 +129,10 @@ export function AppSidebar() {
         <div className="border-t border-sidebar-border">
           {!collapsed && user && (
             <div className="px-4 py-3 flex items-center gap-3">
-              <div className="w-8 h-8 bg-accent/30 rounded-full flex items-center justify-center text-primary-foreground text-xs font-bold flex-shrink-0">
-                {initials}
-              </div>
+              <Avatar className="w-8 h-8 shrink-0 border border-sidebar-border">
+                {user.profile_photo && <AvatarImage src={`${UPLOADS_BASE}${user.profile_photo}`} alt={`${user.name}'s profile photo`} />}
+                <AvatarFallback className="bg-accent/30 text-primary-foreground text-xs font-bold">{initials}</AvatarFallback>
+              </Avatar>
               <div className="min-w-0">
                 <p className="text-xs font-medium text-primary-foreground truncate">{user.name}</p>
                 <p className="text-[10px] text-sidebar-foreground truncate">{user.email}</p>

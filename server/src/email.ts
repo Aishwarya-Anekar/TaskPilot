@@ -1,7 +1,7 @@
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
 import pool from "./db.js";
-import { renderNotificationEmail, renderWelcomeEmail } from "./emailTemplates.js";
+import { renderNotificationEmail, renderVisitorInvitationEmail, renderWelcomeEmail, VisitorInvitationData } from "./emailTemplates.js";
 
 dotenv.config();
 
@@ -18,21 +18,109 @@ const enabled = process.env.EMAIL_NOTIFICATIONS_ENABLED === "true";
 const appUrl = (process.env.APP_URL || "http://localhost:8080").replace(/\/$/, "");
 let transporter: nodemailer.Transporter | null = null;
 
+type EmailFailure = Error & { code?: string; responseCode?: number; command?: string; response?: string };
+
+function configurationProblem() {
+  if (!enabled) return "EMAIL_NOTIFICATIONS_ENABLED is false";
+  const required = ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "EMAIL_FROM"] as const;
+  const missing = required.filter((key) => !process.env[key]);
+  if (missing.length) return `Missing settings: ${missing.join(", ")}`;
+  const port = Number(process.env.SMTP_PORT);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return "SMTP_PORT must be an integer between 1 and 65535";
+  return null;
+}
+
+function redactEmailDiagnostics(value: string) {
+  let safe = value;
+  for (const secret of [process.env.SMTP_PASSWORD, process.env.SMTP_USER, process.env.EMAIL_FROM]) {
+    if (secret) safe = safe.split(secret).join("[REDACTED]");
+  }
+  return safe
+    .replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]")
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email]")
+    .replace(/[\r\n]+/g, " ")
+    .slice(0, 300);
+}
+
+export function logEmailFailure(context: string, error: unknown) {
+  const failure = error instanceof Error ? error as EmailFailure : null;
+  console.error(`${context}: ${JSON.stringify({
+    name: failure?.name || "UnknownError",
+    code: failure?.code || null,
+    responseCode: Number.isInteger(failure?.responseCode) ? failure?.responseCode : null,
+    command: failure?.command ? redactEmailDiagnostics(failure.command) : null,
+    response: failure?.response ? redactEmailDiagnostics(failure.response) : null,
+    message: failure?.message ? redactEmailDiagnostics(failure.message) : null,
+  })}`);
+}
+
+export function visitorEmailFailureMessage(error: unknown) {
+  const failure = error instanceof Error ? error as EmailFailure : null;
+  const code = failure?.code || "";
+  const responseCode = failure?.responseCode || 0;
+  if (code === "EMAIL_DISABLED") return "Visitor invitation email is disabled on the server.";
+  if (code === "EMAIL_CONFIG") return "Visitor invitation email is not fully configured on the server.";
+  if (code === "EAUTH" || responseCode === 535) return "The email provider rejected SMTP authentication. Check SMTP_USER and SMTP_PASSWORD; Gmail requires an App Password.";
+  if (["ENOTFOUND", "ECONNECTION", "ETIMEDOUT", "ESOCKET", "ECONNREFUSED"].includes(code)) return "The email provider could not be reached. Check SMTP_HOST, SMTP_PORT, and TLS settings.";
+  if (code === "EENVELOPE" || [550, 553, 554].includes(responseCode)) return "The email provider rejected the sender or visitor address. Check EMAIL_FROM and the visitor email.";
+  return "The email provider did not accept the invitation. Check the server mail log and retry.";
+}
+
+function createConfigurationError(problem: string | null) {
+  const error = new Error(problem || "SMTP transport is unavailable") as EmailFailure;
+  error.code = !enabled ? "EMAIL_DISABLED" : "EMAIL_CONFIG";
+  return error;
+}
+
 function getTransporter() {
-  if (!enabled) return null;
-  if (!process.env.SMTP_HOST || !process.env.SMTP_PORT || !process.env.SMTP_USER || !process.env.SMTP_PASSWORD || !process.env.EMAIL_FROM) {
-    console.error("Email notifications enabled but SMTP configuration is incomplete");
+  const problem = configurationProblem();
+  if (problem) {
+    console.error(`Email transport unavailable: ${problem}`);
     return null;
   }
   if (!transporter) {
+    const port = Number(process.env.SMTP_PORT);
+    const secure = process.env.SMTP_SECURE === "true";
     transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT),
-      secure: process.env.SMTP_SECURE === "true",
+      port,
+      secure,
+      requireTLS: port === 587 && !secure,
       auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 20000,
     });
   }
   return transporter;
+}
+
+export async function verifySmtpConnection() {
+  const mailer = getTransporter();
+  if (!mailer) throw createConfigurationError(configurationProblem());
+  await mailer.verify();
+  return { host: process.env.SMTP_HOST, port: Number(process.env.SMTP_PORT), secure: process.env.SMTP_SECURE === "true" };
+}
+
+export async function sendSmtpTestEmail() {
+  const mailer = getTransporter();
+  if (!mailer) throw createConfigurationError(configurationProblem());
+  const recipient = process.env.SMTP_USER;
+  if (!recipient || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) throw createConfigurationError("SMTP_USER must be a valid test mailbox address");
+  const result = await mailer.sendMail({
+    from: process.env.EMAIL_FROM,
+    to: recipient,
+    subject: `TaskPilot SMTP configuration test ${new Date().toISOString()}`,
+    text: "This is a TaskPilot SMTP configuration test. No visitor information is included.",
+    html: "<p>This is a TaskPilot SMTP configuration test.</p><p>No visitor information is included.</p>",
+  });
+  if (!result.accepted.some((address: string) => address.toLowerCase() === recipient.toLowerCase())) {
+    const error = new Error("SMTP provider did not accept the configured test mailbox") as EmailFailure;
+    error.code = "EENVELOPE";
+    error.responseCode = 550;
+    throw error;
+  }
+  return { accepted: true };
 }
 
 function linkFor(entityType?: string, entityId?: number) {
@@ -98,6 +186,26 @@ export async function sendWelcomeEmail(user: { id: number; name: string; email: 
   }
 }
 
+export async function sendVisitorInvitationEmail(to: string, data: VisitorInvitationData) {
+  const mailer = getTransporter();
+  if (!mailer) throw createConfigurationError(configurationProblem());
+  const invitation = renderVisitorInvitationEmail(data);
+  const result = await mailer.sendMail({
+    from: process.env.EMAIL_FROM,
+    to,
+    subject: invitation.subject.replace(/[\r\n]/g, " "),
+    text: invitation.text,
+    html: invitation.html,
+  });
+  if (!result.accepted.some((address: string) => address.toLowerCase() === to.toLowerCase())) {
+    const error = new Error("Email provider did not accept the visitor recipient") as EmailFailure;
+    error.code = "EENVELOPE";
+    error.response = result.response;
+    throw error;
+  }
+  return { accepted: true };
+}
+
 export async function sendPasswordResetEmail(user: { name: string; email: string }, token: string) {
   const mailer = getTransporter();
   if (!mailer) return;
@@ -106,6 +214,26 @@ export async function sendPasswordResetEmail(user: { name: string; email: string
     from: process.env.EMAIL_FROM, to: user.email, subject: "Reset your TaskPilot password",
     html: `<p>Hello ${user.name.replace(/[<>]/g, "")},</p><p>Use the button below to reset your TaskPilot password. This link expires in 30 minutes.</p><p><a href="${link}">Reset password</a></p><p>If you did not request this, you can ignore this email.</p>`,
   });
+}
+
+export async function sendAccountSetupEmail(user: { name: string; email: string }, token: string) {
+  const mailer = getTransporter();
+  if (!mailer) return false;
+  const link = `${appUrl}/reset-password?mode=setup&token=${encodeURIComponent(token)}`;
+  const safeName = user.name.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[character]!);
+  await mailer.sendMail({
+    from: process.env.EMAIL_FROM,
+    to: user.email,
+    subject: "Set up your TaskPilot account",
+    html: `<p>Hello ${safeName},</p><p>A Super Admin created a TaskPilot account for you. Use the link below to choose your password and activate your account.</p><p><a href="${link}">Set your password</a></p><p>This link expires in 24 hours. If you were not expecting this account, you can ignore this email.</p>`,
+  });
+  return true;
 }
 
 export async function sendVerificationEmail(user: { name: string; email: string }, token: string) {

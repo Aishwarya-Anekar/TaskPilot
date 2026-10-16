@@ -1,10 +1,10 @@
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { CheckCircle, Circle, Loader2, Send, Upload, Plus, Award, ClipboardList, Clock, ShieldCheck, QrCode } from "lucide-react";
 import { useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PageTransition } from "@/components/motion/PageTransition";
-import { apiGet, apiPost, apiPut, UPLOADS_BASE } from "@/lib/api";
+import { apiDelete, apiGet, apiPost, apiPut, UPLOADS_BASE } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { format, formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
@@ -71,6 +71,7 @@ export default function TrackDetailsPage() {
   const { id } = useParams();
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // States
@@ -82,6 +83,7 @@ export default function TrackDetailsPage() {
   const [reviewComment, setReviewComment] = useState("");
   const [reviewing, setReviewing] = useState(false);
   const [loggingAttendance, setLoggingAttendance] = useState(false);
+  const [deletingTask, setDeletingTask] = useState(false);
 
   // Event Meeting Notes States
   const [showNotesForm, setShowNotesForm] = useState(false);
@@ -101,6 +103,26 @@ export default function TrackDetailsPage() {
     enabled: !!task?.event_id,
   });
 
+  const handleDeleteTask = async () => {
+    if (!window.confirm(`Delete task "${task.title}"? This will remove it from active task listings while leaving the parent event and other tasks unchanged.`)) {
+      return;
+    }
+
+    setDeletingTask(true);
+    try {
+      await apiDelete(`/tasks/${task.id}`);
+      await queryClient.invalidateQueries({ queryKey: ["myTasksList"] });
+      await queryClient.invalidateQueries({ queryKey: ["taskDetails"] });
+      toast.success("Task deleted");
+      navigate("/track");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to delete task";
+      toast.error(message);
+    } finally {
+      setDeletingTask(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <PageTransition>
@@ -119,7 +141,7 @@ export default function TrackDetailsPage() {
 
   const isCoordinator = task.assigned_to_id === user?.id;
   const isDeptHead = user?.role === "dept_head";
-  const isAdmin = user?.role === "admin" || user?.role === "super_admin";
+  const isAdmin = user?.role === "super_admin";
   const currentStep = getStepIndex(task.status);
 
   // Post Comment
@@ -271,10 +293,26 @@ export default function TrackDetailsPage() {
             </h1>
             <p className="text-xs text-muted-foreground mt-0.5">Task ID: #{task.id} {task.due_date ? `• Due: ${new Date(task.due_date).toLocaleString()}` : ""}</p>
           </div>
-          <span className="text-xs bg-accent/10 text-accent font-semibold px-3.5 py-1.5 rounded-full uppercase tracking-wider">
-            {task.status}
-          </span>
-          {task.is_overdue && <span className="text-xs bg-destructive/10 text-destructive font-semibold px-3.5 py-1.5 rounded-full uppercase tracking-wider">Overdue</span>}
+          <div className="flex items-center gap-2">
+            <span className="text-xs bg-accent/10 text-accent font-semibold px-3.5 py-1.5 rounded-full uppercase tracking-wider">
+              {task.status}
+            </span>
+            {task.is_overdue && <span className="text-xs bg-destructive/10 text-destructive font-semibold px-3.5 py-1.5 rounded-full uppercase tracking-wider">Overdue</span>}
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void handleDeleteTask();
+                }}
+                disabled={deletingTask}
+                className="cursor-pointer rounded-lg border border-destructive/60 bg-destructive/10 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-destructive transition-colors hover:bg-destructive/15 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {deletingTask ? "Deleting..." : "Delete Task"}
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Status Timeline */}
@@ -551,6 +589,7 @@ export default function TrackDetailsPage() {
                     type="file"
                     ref={fileInputRef}
                     onChange={handleFileChange}
+                    accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.png,.jpg,.jpeg,.gif,.webp,.zip,.rar"
                     className="hidden"
                   />
                   <motion.button

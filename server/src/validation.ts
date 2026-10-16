@@ -1,7 +1,42 @@
-export const EVENT_STATUSES = ["Draft", "Active", "Completed", "Cancelled"] as const;
-export const TASK_PRIORITIES = ["Low", "Medium", "High"] as const;
-export const TASK_STATUSES = ["Pending", "In Progress", "Under Review", "Completed", "Rejected"] as const;
-export const USER_ROLES = ["super_admin", "admin", "dept_head", "employee"] as const;
+export const EVENT_CATEGORIES = [
+  "Department Meeting",
+  "Internal Examination",
+  "University Examination",
+  "College Festival or Technical Event",
+  "Faculty Training",
+  "Laboratory Inspection",
+  "Accreditation Documentation",
+  "Academic Activity",
+  "Administrative Work",
+  "Other",
+] as const;
+
+export const EVENT_STATUSES = ["Draft", "Active", "Completed", "Cancelled", "Pending Approval", "Approved", "Rejected"] as const;
+export const TASK_PRIORITIES = ["Low", "Medium", "High", "Urgent"] as const;
+export const TASK_CATEGORIES = [
+  "Academic Work",
+  "Examination",
+  "Documentation",
+  "Meeting Preparation",
+  "Event Preparation",
+  "Laboratory Maintenance",
+  "Administrative Work",
+  "Student Activity",
+  "Other",
+] as const;
+export const TASK_STATUSES = [
+  "Pending",
+  "In Progress",
+  "Under Review",
+  "Submitted for Review",
+  "Completed",
+  "Approved",
+  "Rework Required",
+  "Rejected",
+  "Cancelled",
+] as const;
+export const APPROVAL_STATUSES = ["Not Required", "Pending Approval", "Approved", "Rejected"] as const;
+export const USER_ROLES = ["super_admin", "dept_head", "employee"] as const;
 
 export function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;

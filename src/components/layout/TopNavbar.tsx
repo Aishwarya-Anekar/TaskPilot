@@ -6,6 +6,8 @@ import { GlobalSearch } from "./GlobalSearch";
 import { apiGet } from "@/lib/api";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { UPLOADS_BASE } from "@/lib/api";
 
 export function TopNavbar() {
   const { isDark, toggle } = useTheme();
@@ -42,9 +44,10 @@ export function TopNavbar() {
           {Boolean(unread?.count) && <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 bg-accent text-accent-foreground text-[10px] font-bold rounded-full flex items-center justify-center">{unread!.count > 99 ? "99+" : unread!.count}</span>}
         </motion.button>
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-full btn-gradient flex items-center justify-center text-primary-foreground text-sm font-semibold">
-            {initials}
-          </div>
+          <Avatar className="w-9 h-9 border border-border">
+            {user?.profile_photo && <AvatarImage src={`${UPLOADS_BASE}${user.profile_photo}`} alt={`${user.name}'s profile photo`} />}
+            <AvatarFallback className="btn-gradient text-primary-foreground text-sm font-semibold">{initials}</AvatarFallback>
+          </Avatar>
           <div className="hidden sm:block">
             <p className="text-sm font-medium text-foreground">{user?.name || "User"}</p>
             <p className="text-xs text-muted-foreground">{user?.email || ""}</p>

@@ -1,4 +1,4 @@
-import { Bell, CheckCheck, Clock, AlertTriangle, ClipboardCheck, Megaphone, CalendarDays } from "lucide-react";
+import { Bell, CheckCheck, Clock, AlertTriangle, ClipboardCheck, Megaphone, CalendarDays, UserRound } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPut } from "@/lib/api";
@@ -24,6 +24,7 @@ const icons: Record<string, typeof Bell> = {
   task_approved: ClipboardCheck,
   task_rejected: AlertTriangle,
   task_submitted: ClipboardCheck,
+  visitor_registered: UserRound,
 };
 
 export default function NotificationPage() {
@@ -49,6 +50,7 @@ export default function NotificationPage() {
     if (notification.entity_type === "task" && notification.entity_id) navigate(`/track/${notification.entity_id}`);
     else if (notification.entity_type === "event") navigate("/track");
     else if (notification.entity_type === "announcement") navigate("/communication");
+    else if (notification.entity_type === "visitor" && notification.entity_id) navigate(`/visitors?visitor_id=${notification.entity_id}`);
     else navigate("/notifications");
   };
 

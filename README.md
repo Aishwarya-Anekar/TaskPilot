@@ -1,508 +1,41 @@
-# 🚀 TaskPilot
+# TaskPilot 🚀📋
 
-### A Digital Framework for Team Collaboration and Workflow Orchestration
-
-TaskPilot is a full-stack web-based platform designed to streamline organizational workflow, task management, event coordination, and team collaboration.
-
-It provides a centralized workspace where administrators, department heads, and employees can plan activities, assign responsibilities, monitor progress, manage resources, collaborate with team members, and track organizational operations efficiently.
-
-TaskPilot is designed to be adaptable for organizations such as:
-
-* 🏫 Schools and Colleges
-* 🏢 Corporate Organizations
-* 🎓 Training Institutes
-* 🤝 NGOs
-* 🎉 Event Management Teams
-* 🏥 Hospitals and Institutions
+TaskPilot is a digital framework for team collaboration and workflow orchestration. It serves as a centralized organization operations workspace allowing admins, department heads, and employees to plan, delegate, execute, and monitor activities.
 
 ---
 
-# 🏗️ Project Architecture
+## 🛠️ Tech Stack
 
-```text
-┌─────────────────────┐
-│   React Frontend    │
-│ Vite + TypeScript   │
-└──────────┬──────────┘
-           │
-           │ REST API / HTTP
-           ▼
-┌─────────────────────┐
-│   Express Backend   │
-│ Node.js + TypeScript│
-└──────────┬──────────┘
-           │
-           │ SQL Queries
-           ▼
-┌─────────────────────┐
-│ PostgreSQL Database │
-└─────────────────────┘
-```
+### Frontend
+- **Framework:** React 18 with Vite
+- **Language:** TypeScript
+- **Styling:** Tailwind CSS & Shadcn UI (Radix Primitives)
+- **Animations:** Framer Motion (premium SaaS transitions)
+- **Data Fetching:** TanStack React Query
+- **Charts:** Recharts
+
+### Backend
+- **Framework:** Express (Node.js)
+- **Language:** TypeScript (`tsx` watcher)
+- **Database client:** `pg` (node-postgres)
+- **File Uploads:** Multer
+
+### Database
+- **Database:** PostgreSQL (equipped with automated schema creation & seeding on startup)
 
 ---
 
-# 🛠️ Tech Stack
-
-## Frontend
-
-* **Framework:** React 18 with Vite
-* **Language:** TypeScript
-* **Styling:** Tailwind CSS
-* **UI Components:** Shadcn UI and Radix UI
-* **Animations:** Framer Motion
-* **Data Fetching:** TanStack React Query
-* **Forms:** React Hook Form
-* **Validation:** Zod
-* **Charts:** Recharts
-* **Report Generation:** jsPDF
-* **Excel Export:** SheetJS
-
-## Backend
-
-* **Runtime:** Node.js
-* **Framework:** Express.js
-* **Language:** TypeScript
-* **Authentication:** JWT
-* **Password Security:** bcrypt
-* **Database Client:** node-postgres (`pg`)
-* **File Uploads:** Multer
-* **Email Notifications:** Nodemailer
-
-## Database
-
-* **Database:** PostgreSQL
-* **Schema Initialization:** Safe database initialization
-* **Data Persistence:** Existing data is preserved during normal server restarts
-* **Seed Data:** Default data is inserted safely without unnecessary duplication
-
----
-
-# ✨ Features
-
-## 🔐 Authentication and Authorization
-
-* JWT-based authentication
-* Role-Based Access Control (RBAC)
-* Secure password hashing
-* Forgot password functionality
-* Password reset functionality
-* Email verification
-* Change password functionality
-* Backend validation
-* Protected routes
-* Secure access based on user roles
-
----
-
-## 👥 Role-Based User Management
-
-TaskPilot supports four primary user roles:
-
-### 👑 Super Admin
-
-* Manage administrators
-* Monitor system activity
-* View security and activity logs
-* Manage system-level settings
-* Monitor organizational operations
-
-### 🛠️ Admin
-
-* Manage users and employees
-* Manage departments
-* Create and manage events
-* Create and assign tasks
-* Monitor organizational progress
-* Manage resources
-* Create announcements
-* Generate reports
-
-### 👨‍💼 Department Head
-
-* Monitor department tasks
-* Manage subtasks and checklists
-* Review task completion
-* Approve or reject deliverables
-* Monitor department progress
-
-### 👨‍💻 Employee
-
-* View assigned tasks
-* Update task progress
-* Complete subtasks and checklists
-* Upload task completion proofs
-* Participate in task discussions
-* View notifications and deadlines
-
----
-
-# 📅 Event Management
-
-TaskPilot supports the planning and management of organizational events such as:
-
-* Independence Day
-* Republic Day
-* Annual Gatherings
-* College Festivals
-* Workshops
-* Seminars
-* Hackathons
-* Sports Events
-* Placement Drives
-
-### Features
-
-* Create and manage events
-* Set event dates and schedules
-* Assign event coordinators
-* Track event status
-* Create event-related tasks
-* Event templates
-* Recurring events
-* Meeting notes
-* Event feedback
-* QR attendance
-
----
-
-# 📋 Task Management
-
-The Task Management module helps organizations efficiently assign and monitor responsibilities.
-
-### Features
-
-* Create tasks
-* Assign tasks to users
-* Assign tasks to departments
-* Set deadlines
-* Set task priorities
-* Track task progress
-* Update task status
-* Create subtasks
-* Create checklists
-* Task-specific discussions
-* Upload completion proofs
-* Task review and approval workflow
-
-### Task Status Workflow
-
-```text
-Not Started
-In Progress
-Under Review
-Completed
-Rejected
-```
-
-### Task Priority
-
-```text
-High
-Medium
-Low
-```
-
----
-
-# 📊 Dashboard and Analytics
-
-TaskPilot provides role-based dashboards for monitoring organizational activities.
-
-### Dashboard Features
-
-* Total tasks
-* Pending tasks
-* Completed tasks
-* Overdue tasks
-* Upcoming deadlines
-* Upcoming events
-* Department-wise progress
-* Task completion statistics
-* Performance analytics
-* Charts and reports
-
----
-
-# 🔔 Notification System
-
-The system provides notifications for important organizational activities.
-
-### Notifications Include
-
-* New task assignments
-* Task updates
-* Task completion
-* Task approval or rejection
-* Upcoming deadlines
-* Overdue tasks
-* Event reminders
-* Important announcements
-
-### Supported Channels
-
-* In-app notifications
-* Email notifications
-
-Users can manage notification preferences through their profile settings.
-
----
-
-# ⏰ Deadline Reminders and Auto-Escalation
-
-TaskPilot helps organizations prevent missed deadlines.
-
-### Features
-
-* Deadline reminders
-* Overdue task detection
-* Automatic escalation
-* Administrative notifications
-* Escalation tracking
-
----
-
-# 📆 Calendar Management
-
-The centralized calendar displays important organizational schedules.
-
-### Calendar Includes
-
-* Events
-* Task deadlines
-* Upcoming activities
-* Important organizational dates
-
----
-
-# 💬 Collaboration and Communication
-
-TaskPilot improves communication between team members.
-
-### Features
-
-* Task-specific comments
-* Task discussions
-* Announcements
-* Meeting notes
-* Organizational communication
-* Activity tracking
-
----
-
-# 📁 File and Proof Management
-
-Users can upload files related to tasks and organizational activities.
-
-Supported file types may include:
-
-* Images
-* PDF documents
-* Word documents
-* Excel files
-* Task completion proofs
-
----
-
-# 🏢 Department Management
-
-Administrators can create and manage departments.
-
-Example departments:
-
-* Administration
-* Information Technology
-* Sports
-* Cultural
-* Accounts
-* Library
-* Training
-
----
-
-# 🪑 Resource Management and Booking
-
-Organizations can manage shared resources such as:
-
-* Projectors
-* Meeting rooms
-* Seminar halls
-* Laboratories
-* Speakers
-* Vehicles
-* Equipment
-
-### Resource Booking Features
-
-* Add and manage resources
-* Check resource availability
-* Create bookings
-* Track booking status
-* Prevent overlapping bookings
-* Validate booking start and end times
-
-The system prevents the same resource from being booked for overlapping time periods.
-
----
-
-# 🧑‍🤝‍🧑 Visitor Management
-
-TaskPilot provides visitor tracking functionality.
-
-### Features
-
-* Register visitors
-* Store visitor details
-* Track check-in time
-* Track check-out time
-* Associate visitors with events
-* Maintain visitor records
-
-The backend ensures that a visitor cannot be checked out before their check-in time.
-
----
-
-# 📱 QR Attendance
-
-TaskPilot supports QR-based attendance for events.
-
-### Features
-
-* Generate event QR codes
-* Scan QR codes
-* Record attendance
-* Track event participation
-
----
-
-# 📢 Announcement Bulletin
-
-Administrators can publish organizational announcements.
-
-Examples include:
-
-* Important notices
-* Circulars
-* Holiday announcements
-* Urgent updates
-* Department announcements
-
-Announcements can be targeted to specific departments or published organization-wide.
-
----
-
-# 📝 Minutes of Meetings (MoM)
-
-TaskPilot allows organizations to maintain meeting records.
-
-### Features
-
-* Store meeting details
-* Record important decisions
-* Document action points
-* Associate meeting notes with events or activities
-
----
-
-# ⭐ Feedback Management
-
-Users can submit feedback after events or organizational activities.
-
-### Features
-
-* Event feedback
-* Ratings
-* Comments
-* Review records
-
----
-
-# 📈 Reports and Export
-
-TaskPilot provides reporting and analytics capabilities.
-
-### Available Reports
-
-* Task reports
-* Employee performance reports
-* Department reports
-* Event reports
-* Pending task reports
-* Completed task reports
-* Overdue task reports
-
-### Export Formats
-
-* PDF
-* Excel
-
----
-
-# 🔍 Search Functionality
-
-Users can quickly search for organizational information.
-
-Supported search areas include:
-
-* Users
-* Tasks
-* Events
-* Departments
-* Other relevant records
-
----
-
-# 📜 Activity Logs
-
-TaskPilot maintains activity records for important actions.
-
-Activity logs can include:
-
-* Task assignments
-* Task updates
-* Task completion
-* Administrative actions
-* User activities
-* Important system events
-
-This improves accountability and transparency.
-
----
-
-# 🛡️ Backend Validation
-
-Important business rules are validated on the backend to protect data integrity and prevent invalid requests.
-
-### Events
-
-* End date cannot be earlier than start date
-* Invalid date values are rejected
-
-### Tasks
-
-* Progress must be between `0` and `100`
-* Priority must contain a valid value
-* Deadline data is validated
-* Invalid status values are rejected
-
-### Visitors
-
-* Check-out cannot occur before check-in
-* Required visitor information is validated
-
-### Resource Bookings
-
-* End time must be later than start time
-* Invalid date/time ranges are rejected
-* Overlapping bookings for the same resource are prevented
-
-### Users
-
-* Email format validation
-* Duplicate email prevention
-* Strong password validation
-* Secure password handling
-
-Frontend validation improves user experience, while backend validation remains the final authority.
+## ✨ Features
+
+- **JWT Auth & Authorization:** Role-based access control supporting four roles: `super_admin`, `admin`, `dept_head`, and `employee`.
+- **Role-based Dashboards:**
+  - **Super Admin:** Configures system-wide toggles, logs system security audits, and registers administrators.
+  - **Admin:** Creates events, assigns tasks, schedules deadlines, registers department profiles, and books organizational resources.
+  - **Department Head:** Breaks down assigned events into task checklists, manages subtasks, and reviews deliverables before marking completed.
+  - **Employee:** Executes assigned tasks, checks off subtasks, uploads proof files, and participates in task discussions.
+- **Announcement Bulletin:** Allows broadcasting updates targeting specific departments or public bulletins.
+- **QR Attendance:** Generates event QR codes for admins and allows simulated checkins for staff.
+- **MoM & Feedback:** Minutes of Meetings notes log event decisions, and feedback forms record review scores.
 
 ---
 
@@ -553,10 +86,8 @@ Create a `.env` file inside the `server/` directory.
 Example:
 
 ```env
-DATABASE_URL=postgresql://YOUR_USERNAME:YOUR_PASSWORD@localhost:5432/taskpilot
-
-JWT_SECRET=your_secure_jwt_secret
-
+DATABASE_URL=postgresql://<user>:<password>@localhost:5432/campus_connect
+JWT_SECRET=campus-connect-jwt-secret-2024
 PORT=5000
 
 APP_URL=http://localhost:8080
@@ -566,31 +97,19 @@ EMAIL_NOTIFICATIONS_ENABLED=false
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_SECURE=false
-
-SMTP_USER=yourgmail@gmail.com
-SMTP_PASSWORD=your_google_app_password
-
-EMAIL_FROM="TaskPilot <yourgmail@gmail.com>"
+SMTP_USER=your-smtp-username
+SMTP_PASSWORD=your-smtp-password
+EMAIL_FROM=TaskPilot <no-reply@example.com>
 ```
 
-## ⚠️ Important Security Note
-
-Never commit your `.env` file to GitHub.
-
-Do not expose:
-
-* Database passwords
-* JWT secrets
-* SMTP passwords
-* Google App Passwords
-* API keys
+Set `EMAIL_NOTIFICATIONS_ENABLED=true` only after replacing the SMTP example values with credentials from a development mail provider such as Mailtrap, Ethereal, or a Gmail app password. Never commit `server/.env`; it is ignored by Git. Email delivery is recorded in the `email_deliveries` table and deduplicated per user and notification. Users can disable email notifications through their profile preference.
 
 ---
 
-# 🔧 Backend Setup
+### Installation & Run Instructions
 
-Open a terminal and navigate to the backend directory:
-
+#### 1. Setup Backend Server
+Open a terminal, navigate to the `server/` directory, and install dependencies:
 ```bash
 cd server
 ```
@@ -606,17 +125,10 @@ Start the backend server:
 ```bash
 npm run dev
 ```
+*On first startup, the server will check if the database `campus_connect` exists on your PostgreSQL server. If not, it will automatically create the database, build all schema tables, and seed initial support departments and administrators.*
 
-The backend will start on the configured port.
-
----
-
-# 🎨 Frontend Setup
-
-Open another terminal in the project root directory.
-
-Install dependencies:
-
+#### 2. Setup Frontend Client
+Open a second terminal in the project's root folder, install dependencies:
 ```bash
 npm install
 ```
@@ -815,21 +327,6 @@ Potential future improvements include:
 * Advanced notification preferences
 ----------------------------------------------------------------
 
-## 🔑 Default Login Credentials
-Once the database has seeded, you can sign in using:
+## 🔐 Initial Account Provisioning
 
-### Super Administrator
-- **Email:** `superadmin@taskpilot.com`
-- **Password:** `admin123`
-
-### Administrator
-- **Email:** `admin@taskpilot.com`
-- **Password:** `admin123`
-
-### Department Head
-- **Email:** `depthead@taskpilot.com`
-- **Password:** `admin123`
-
-### Employee
-- **Email:** `employee@taskpilot.com`
-- **Password:** `admin123`
+There are no public/default production login credentials. Bootstrap the first Super Admin using the protected deployment environment variables above, then remove them and use the Super Admin dashboard to register users. New users receive a one-time password setup link; configure a mail provider for delivery. If email delivery is unavailable during local development, the Super Admin dashboard provides the setup link to share securely.

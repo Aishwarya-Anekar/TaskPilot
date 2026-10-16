@@ -33,9 +33,11 @@ interface StatsData {
   total: number;
   solved_percent: number;
   pending: number;
-  rejected: number; // mapped to total events for simplicity
+  rejected: number;
   total_events?: number;
+  active_events?: number;
   total_departments?: number;
+  total_admins?: number;
   total_employees?: number;
 }
 
@@ -59,25 +61,13 @@ export default function HomePage() {
       case "super_admin":
         return {
           title: "Super Admin",
-          desc: "Manage organizations settings, administrators registry, and track overall system audit trails.",
+          desc: "Manage organization settings, system registry, and track overall system audit trails.",
           actionText: "Manage Settings",
           actionPath: "/admin",
           actions: [
             { title: "System Logs", desc: "View security logs & system audits", icon: Shield, path: "/admin?tab=logs", color: "btn-gradient-accent" },
             { title: "Organization Toggles", desc: "Configure global system flags", icon: LayoutGrid, path: "/admin?tab=settings", color: "bg-info" },
-            { title: "Manage Admins", desc: "Register and audit platform admins", icon: FileSpreadsheet, path: "/admin?tab=employees", color: "btn-gradient" },
-          ],
-        };
-      case "admin":
-        return {
-          title: "Operations Admin",
-          desc: "Orchestrate events, create workflows, book core resources, and track progress dashboard.",
-          actionText: "Create Event",
-          actionPath: "/report",
-          actions: [
-            { title: "Create Task/Event", desc: "Initialize workflow assignments", icon: FileText, path: "/report", color: "btn-gradient" },
-            { title: "Resource Bookings", desc: "Manage conference rooms & tech tools", icon: Calendar, path: "/admin?tab=resources", color: "bg-info" },
-            { title: "Employees Register", desc: "Manage departments & user roles", icon: FileSpreadsheet, path: "/admin?tab=employees", color: "btn-gradient-accent" },
+            { title: "Manage Team", desc: "Review departments and user roles", icon: FileSpreadsheet, path: "/admin?tab=employees", color: "btn-gradient" },
           ],
         };
       case "dept_head":
@@ -113,15 +103,9 @@ export default function HomePage() {
   const renderStats = () => {
     if (role === "super_admin") {
       return [
-        { label: "Active Events", value: stats?.rejected ?? 0, color: "text-foreground" },
+        { label: "Active Events", value: stats?.active_events ?? 0, color: "text-foreground" },
         { label: "Task Completion", value: `${stats?.solved_percent ?? 0}%`, color: "text-success" },
-        { label: "Registered Admins", value: stats?.total_employees ?? 0, color: "text-info" },
-      ];
-    } else if (role === "admin") {
-      return [
-        { label: "Total Events", value: stats?.rejected ?? 0, color: "text-foreground" },
-        { label: "Active Tasks", value: stats?.pending ?? 0, color: "text-warning" },
-        { label: "Completion Rate", value: `${stats?.solved_percent ?? 0}%`, color: "text-success" },
+        { label: "Registered Admins", value: stats?.total_admins ?? 0, color: "text-info" },
       ];
     } else if (role === "dept_head") {
       return [
@@ -132,7 +116,7 @@ export default function HomePage() {
     } else {
       // Employee
       return [
-        { label: "My Assigned Tasks", value: stats?.pending ?? 0, color: "text-warning" },
+        { label: "My Assigned Tasks", value: stats?.total ?? 0, color: "text-warning" },
         { label: "Tasks Finished", value: stats?.total ? Math.round(stats.total * (stats.solved_percent / 100)) : 0, color: "text-success" },
         { label: "Completion Percentage", value: `${stats?.solved_percent ?? 0}%`, color: "text-success" },
       ];

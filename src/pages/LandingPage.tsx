@@ -7,31 +7,25 @@ import { apiPost } from "@/lib/api";
 
 export default function LandingPage() {
   const navigate = useNavigate();
-  const { login, register } = useAuth();
-  const [isLogin, setIsLogin] = useState(true);
-  
-  // Shared state
+  const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
-  const [department, setDepartment] = useState("IT Support");
-  const [role, setRole] = useState("employee");
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [forgotMode, setForgotMode] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setMessage("");
     setLoading(true);
     try {
       if (forgotMode) {
         await apiPost("/auth/forgot-password", { email });
-        setError("If an account exists for that email, a password reset link has been sent.");
-      } else if (isLogin) {
-        await login(email, password);
+        setMessage("If an account exists for that email, a secure password setup or reset link has been sent.");
       } else {
-        await register({ name, email, password, department, role });
+        await login(email, password);
       }
       if (!forgotMode) navigate("/dashboard");
     } catch (err: any) {
@@ -40,18 +34,6 @@ export default function LandingPage() {
       setLoading(false);
     }
   };
-
-  const toggleMode = () => {
-    setIsLogin(!isLogin);
-    setError("");
-  };
-
-  const demoLogins = [
-    { role: "Super Admin", email: "superadmin@taskpilot.com", pass: "admin123" },
-    { role: "Admin", email: "admin@taskpilot.com", pass: "admin123" },
-    { role: "Dept Head", email: "depthead@taskpilot.com", pass: "admin123" },
-    { role: "Employee", email: "employee@taskpilot.com", pass: "admin123" },
-  ];
 
   const features = [
     "Plan events, orchestrate workflows, and assign tasks instantly.",
@@ -110,7 +92,7 @@ export default function LandingPage() {
       <div className="lg:w-[500px] xl:w-[600px] flex flex-col items-center justify-center p-6 lg:p-12 bg-background relative shrink-0 overflow-y-auto">
         <div className="w-full max-w-md my-auto">
           <motion.div
-            key={isLogin ? "login" : "register"}
+            key={forgotMode ? "forgot" : "login"}
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.4 }}
@@ -118,10 +100,10 @@ export default function LandingPage() {
           >
             <div className="text-center space-y-1 mb-4">
               <h1 className="text-2xl font-bold text-foreground">
-                {forgotMode ? "Reset your password" : isLogin ? "Welcome to TaskPilot" : "Register Employee"}
+                {forgotMode ? "Set up or reset your password" : "Welcome to TaskPilot"}
               </h1>
               <p className="text-sm text-muted-foreground">
-                {forgotMode ? "Enter your registered email address" : isLogin ? "Sign in to your collaboration workspace" : "Register a new profile in the platform"}
+                {forgotMode ? "Enter your registered email address and we'll send a secure link" : "Sign in to your collaboration workspace"}
               </p>
             </div>
 
@@ -137,31 +119,9 @@ export default function LandingPage() {
                 </motion.div>
               )}
             </AnimatePresence>
+            {message && <p className="bg-success/10 text-success text-sm p-3 rounded-lg text-center">{message}</p>}
 
             <form onSubmit={handleSubmit} className="space-y-3.5">
-              <AnimatePresence mode="popLayout">
-                {!isLogin && !forgotMode && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: "auto" }}
-                    exit={{ opacity: 0, height: 0 }}
-                    className="overflow-hidden space-y-3.5"
-                  >
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Full Name</label>
-                      <input
-                        type="text"
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        placeholder="John Smith"
-                        required={!isLogin}
-                        className="w-full px-3.5 py-2.5 rounded-lg input-focus text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
-                      />
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1 font-medium text-foreground">Email</label>
                 <input
@@ -182,49 +142,9 @@ export default function LandingPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
                   required
-                  minLength={6}
                   className="w-full px-3.5 py-2.5 rounded-lg input-focus text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
                 />
               </div>}
-
-              <AnimatePresence mode="popLayout">
-                {!isLogin && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: "auto" }}
-                    exit={{ opacity: 0, height: 0 }}
-                    className="overflow-hidden"
-                  >
-                    <div className="grid grid-cols-2 gap-3 mt-1.5">
-                      <div>
-                        <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Department</label>
-                        <select
-                          value={department}
-                          onChange={(e) => setDepartment(e.target.value)}
-                          className="w-full px-3 py-2.5 rounded-lg input-focus text-xs text-foreground bg-background focus:outline-none cursor-pointer"
-                        >
-                          <option>IT Support</option>
-                          <option>Operations</option>
-                          <option>Human Resources</option>
-                          <option>Events Team</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Role</label>
-                        <select
-                          value={role}
-                          onChange={(e) => setRole(e.target.value)}
-                          className="w-full px-3 py-2.5 rounded-lg input-focus text-xs text-foreground bg-background focus:outline-none cursor-pointer"
-                        >
-                          <option value="employee">Employee</option>
-                          <option value="dept_head">Department Head</option>
-                          <option value="admin">Administrator</option>
-                        </select>
-                      </div>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
 
               <motion.button
                 whileTap={{ scale: 0.98 }}
@@ -233,43 +153,25 @@ export default function LandingPage() {
                 className="w-full py-3 mt-2 rounded-lg btn-gradient text-primary-foreground font-semibold shadow-lg shadow-primary/20 hover:shadow-xl hover:shadow-primary/30 transition-all duration-200 disabled:opacity-70 flex items-center justify-center gap-2 group text-sm"
               >
                 {loading && <Loader2 size={16} className="animate-spin" />}
-                {!loading && <span>{forgotMode ? "Send reset link" : isLogin ? "Sign In" : "Register Profile"}</span>}
+                {!loading && <span>{forgotMode ? "Send password link" : "Sign In"}</span>}
                 {!loading && <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />}
               </motion.button>
             </form>
 
             <div className="pt-3 border-t border-border flex flex-col items-center justify-center space-y-3">
               <p className="text-xs text-muted-foreground">
-                {forgotMode ? "Remembered your password?" : isLogin ? "Need a new profile?" : "Already have an account?"}
+                {forgotMode ? "Remembered your password?" : "First time signing in?"}
               </p>
               <button
                 type="button"
-                onClick={() => { if (forgotMode) { setForgotMode(false); setError(""); } else toggleMode(); }}
+                onClick={() => { setForgotMode(!forgotMode); setError(""); setMessage(""); }}
                 className="w-full py-2 rounded-lg border border-input bg-transparent hover:bg-secondary text-foreground font-medium transition-colors text-xs"
               >
-                {forgotMode ? "Sign in instead" : isLogin ? "Create test account" : "Sign in instead"}
+                {forgotMode ? "Sign in instead" : "Set up password / Forgot password"}
               </button>
-              {isLogin && !forgotMode && <button type="button" onClick={() => { setForgotMode(true); setError(""); }} className="text-xs text-accent hover:underline">Forgot Password?</button>}
+              {!forgotMode && <p className="text-xs text-muted-foreground text-center">New accounts are created by your Super Admin. Use the password setup link sent to your email.</p>}
             </div>
 
-            {isLogin && (
-              <div className="pt-3 border-t border-border/80">
-                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider text-center mb-2">Test Workspace Logins</p>
-                <div className="grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
-                  {demoLogins.map((d) => (
-                    <div 
-                      key={d.role} 
-                      onClick={() => { setEmail(d.email); setPassword(d.pass); }}
-                      className="p-1.5 rounded bg-secondary/60 hover:bg-secondary border border-border/50 cursor-pointer transition-colors"
-                    >
-                      <p className="font-semibold text-foreground">{d.role}</p>
-                      <p className="truncate text-[10px]">{d.email}</p>
-                      <p className="text-[9px] opacity-70">Pass: {d.pass}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </motion.div>
         </div>
       </div>

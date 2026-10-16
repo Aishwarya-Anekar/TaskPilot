@@ -1,7 +1,7 @@
 import { Router, Response } from "express";
 import pool from "../db.js";
 import { authenticate, AuthRequest } from "../middleware/auth.js";
-import { isNonEmptyString, validateDateRange } from "../validation.js";
+import { EVENT_CATEGORIES, isNonEmptyString, isOneOf, validateDateRange } from "../validation.js";
 
 const router = Router();
 router.use(authenticate);
@@ -26,22 +26,57 @@ router.post("/", async (req: AuthRequest, res: Response) => {
   if (!isAdmin(req)) return res.status(403).json({ error: "Admin access required" });
   const client = await pool.connect();
   try {
-    const { name, description, default_duration_minutes, suggested_department_ids, default_responsible_role, tasks = [] } = req.body;
-    if (!name) return res.status(400).json({ error: "Template name is required" });
+    const {
+      name,
+      description,
+      event_category,
+      default_duration_minutes,
+      default_location,
+      is_active,
+      suggested_department_ids,
+      default_responsible_role,
+      tasks = [],
+    } = req.body;
+
+    if (!name || typeof name !== "string" || !name.trim()) {
+      return res.status(400).json({ error: "Template name is required" });
+    }
+    if (event_category !== undefined && !isOneOf(event_category, EVENT_CATEGORIES)) {
+      return res.status(400).json({ error: "Invalid event category" });
+    }
+    if (tasks.length > 0 && tasks.some((task: any) => !task || !task.title || !String(task.title).trim())) {
+      return res.status(400).json({ error: "Each template task requires a title" });
+    }
+
     await client.query("BEGIN");
     const template = await client.query(
-      `INSERT INTO event_templates (name, description, default_duration_minutes, suggested_department_ids, default_responsible_role, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [name, description || "", Number(default_duration_minutes) || 120, suggested_department_ids || [], default_responsible_role || null, req.userId]
+      `INSERT INTO event_templates (name, description, event_category, default_duration_minutes, default_location, suggested_department_ids, default_responsible_role, is_active, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [
+        name.trim(),
+        typeof description === "string" ? description.trim() : "",
+        event_category || "Other",
+        Number(default_duration_minutes) || 120,
+        typeof default_location === "string" ? default_location.trim() : "",
+        Array.isArray(suggested_department_ids) ? suggested_department_ids : [],
+        default_responsible_role || null,
+        typeof is_active === "boolean" ? is_active : true,
+        req.userId,
+      ]
     );
     for (const [index, task] of tasks.entries()) {
+      const taskBody = task || {};
+      const checklist = Array.isArray(taskBody.checklist) ? taskBody.checklist : Array.isArray(taskBody.subtasks) ? taskBody.subtasks : [];
       const item = await client.query(
         `INSERT INTO event_template_tasks (template_id, title, description, priority, responsible_role, responsible_department_id, relative_due_hours, sort_order)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-        [template.rows[0].id, task.title, task.description || "", task.priority || "Medium", task.responsible_role || null, task.responsible_department_id || null, Number(task.relative_due_hours) || 24, index]
+        [template.rows[0].id, String(taskBody.title).trim(), String(taskBody.description || "").trim(), taskBody.priority || "Medium", taskBody.responsible_role || null, taskBody.responsible_department_id || null, Number(taskBody.relative_due_hours) || 24, index]
       );
-      for (const [subIndex, title] of (task.subtasks || []).entries()) {
-        await client.query("INSERT INTO event_template_subtasks (template_task_id, title, sort_order) VALUES ($1,$2,$3)", [item.rows[0].id, title, subIndex]);
+      for (const [subIndex, title] of checklist.entries()) {
+        const cleanTitle = String(title).trim();
+        if (cleanTitle) {
+          await client.query("INSERT INTO event_template_subtasks (template_task_id, title, sort_order) VALUES ($1,$2,$3)", [item.rows[0].id, cleanTitle, subIndex]);
+        }
       }
     }
     await client.query("COMMIT");
@@ -54,20 +89,48 @@ router.put("/:id", async (req: AuthRequest, res: Response) => {
   if (!isAdmin(req)) return res.status(403).json({ error: "Admin access required" });
   const client = await pool.connect();
   try {
-    const { name, description, default_duration_minutes, suggested_department_ids, default_responsible_role, tasks = [] } = req.body;
+    const {
+      name,
+      description,
+      event_category,
+      default_duration_minutes,
+      default_location,
+      is_active,
+      suggested_department_ids,
+      default_responsible_role,
+      tasks = [],
+    } = req.body;
+
     await client.query("BEGIN");
     const template = await client.query(
-      `UPDATE event_templates SET name=$1, description=$2, default_duration_minutes=$3, suggested_department_ids=$4, default_responsible_role=$5, updated_at=NOW() WHERE id=$6 RETURNING *`,
-      [name, description || "", Number(default_duration_minutes) || 120, suggested_department_ids || [], default_responsible_role || null, req.params.id]
+      `UPDATE event_templates SET name=$1, description=$2, event_category=$3, default_duration_minutes=$4, default_location=$5, suggested_department_ids=$6, default_responsible_role=$7, is_active=$8, updated_at=NOW() WHERE id=$9 RETURNING *`,
+      [
+        name?.trim() || "Untitled Template",
+        typeof description === "string" ? description.trim() : "",
+        event_category || "Other",
+        Number(default_duration_minutes) || 120,
+        typeof default_location === "string" ? default_location.trim() : "",
+        Array.isArray(suggested_department_ids) ? suggested_department_ids : [],
+        default_responsible_role || null,
+        typeof is_active === "boolean" ? is_active : true,
+        req.params.id,
+      ]
     );
     if (!template.rows.length) { await client.query("ROLLBACK"); return res.status(404).json({ error: "Template not found" }); }
     await client.query("DELETE FROM event_template_tasks WHERE template_id = $1", [req.params.id]);
     for (const [index, task] of tasks.entries()) {
+      const taskBody = task || {};
+      const checklist = Array.isArray(taskBody.checklist) ? taskBody.checklist : Array.isArray(taskBody.subtasks) ? taskBody.subtasks : [];
       const item = await client.query(
         `INSERT INTO event_template_tasks (template_id,title,description,priority,responsible_role,responsible_department_id,relative_due_hours,sort_order) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-        [req.params.id, task.title, task.description || "", task.priority || "Medium", task.responsible_role || null, task.responsible_department_id || null, Number(task.relative_due_hours) || 24, index]
+        [req.params.id, String(taskBody.title || "").trim(), String(taskBody.description || "").trim(), taskBody.priority || "Medium", taskBody.responsible_role || null, taskBody.responsible_department_id || null, Number(taskBody.relative_due_hours) || 24, index]
       );
-      for (const [subIndex, title] of (task.subtasks || []).entries()) await client.query("INSERT INTO event_template_subtasks (template_task_id,title,sort_order) VALUES ($1,$2,$3)", [item.rows[0].id, title, subIndex]);
+      for (const [subIndex, title] of checklist.entries()) {
+        const cleanTitle = String(title).trim();
+        if (cleanTitle) {
+          await client.query("INSERT INTO event_template_subtasks (template_task_id,title,sort_order) VALUES ($1,$2,$3)", [item.rows[0].id, cleanTitle, subIndex]);
+        }
+      }
     }
     await client.query("COMMIT"); res.json(template.rows[0]);
   } catch (err) { await client.query("ROLLBACK"); console.error("Update event template error:", err); res.status(500).json({ error: "Server error" }); }
